@@ -1,0 +1,73 @@
+{
+  "sites": [
+    {
+      "name": "Exempelkund",
+      "network_id": "0123456789abcdef",
+      "router_zt_ip": "10.244.20.5",
+      "remote_subnet": "192.168.10.0",
+      "subnet_mask": "255.255.255.0"
+    }
+  ],
+  "ip_presets": [
+    {
+      "name": "192.168.5.x",
+      "network": "192.168.5",
+      "host": 200,
+      "prefix": 24,
+      "gateway": ""
+    },
+    {
+      "name": "192.168.0.x",
+      "network": "192.168.0",
+      "host": 200,
+      "prefix": 24,
+      "gateway": ""
+    },
+    {
+      "name": "192.168.1.x",
+      "network": "192.168.1",
+      "host": 200,
+      "prefix": 24,
+      "gateway": ""
+    },
+    {
+      "name": "192.168.3.x",
+      "network": "192.168.3",
+      "host": 200,
+      "prefix": 24,
+      "gateway": ""
+    },
+    {
+      "name": "192.168.10.x",
+      "network": "192.168.10",
+      "host": 200,
+      "prefix": 24,
+      "gateway": ""
+    },
+    {
+      "name": "10.20.?.x",
+      "network": "10.20.?",
+      "host": 200,
+      "prefix": 24,
+      "gateway": ""
+    }
+  ],
+  "settings": {
+    "interface": "",
+    "notifications": true,
+    "pin_tray": true
+  },
+  "discovery": {
+    "duration": 5,
+    "extra_subnets": [
+      "192.168.2",
+      "192.168.100",
+      "192.168.178",
+      "192.168.250",
+      "10.0.0",
+      "10.10.10",
+      "172.16.0"
+    ]
+  },
+  "last_values": {}
+}
