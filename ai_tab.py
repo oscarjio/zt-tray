@@ -389,9 +389,9 @@ class AiTab:
     def start_agent_mode(self, info, baud, focus, desc):
         try:
             ag = self._get_agent()
-        except A.LLMError as e:
-            self._say("err", str(e) + "\n")
-            return
+        except Exception as e:
+            self._say("err", A.redact(str(e), self.key()) + "\n")
+            return False
         mt = self.host.mt
         if self.host.running():
             mt.stop()
@@ -404,7 +404,7 @@ class AiTab:
         if self.console and not baud:
             self._pending = (ag, desc, focus)
             self.console.start()
-            return
+            return True
         self._say("status", time.strftime("%H:%M ") + f"Agentläge: {info['device']} "
                   f"{AM.chip(info)} – {'baud ' + str(baud) if baud else 'auto-söker linjeinställning'}…\n")
         self.busy = True
@@ -426,6 +426,7 @@ class AiTab:
                 self.f.after(0, self._done)
             self.f.after(0, lambda: self._wd_begin(ag, focus))
         threading.Thread(target=work, daemon=True).start()
+        return True
 
     def after_detect(self):
         """Anropas av konsolen när linjedetekteringen är klar och lyssningen startat."""

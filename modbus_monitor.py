@@ -788,6 +788,16 @@ class Monitor:
                 n += 1
         return n
 
+    def resync(self):
+        """Efter tappad/återansluten port: släng halv ram och väntande fråga (ger annars falska 'missade')."""
+        with self.lock:
+            self.seg = bytearray()
+            self.seg_t0 = None
+            self.seg_bounds = []
+            self.last_byte_t = None
+            self.pending = None
+            self._ctx_req = None
+
     def tick(self, now):
         with self.lock:
             self._tick_locked(now)

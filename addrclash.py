@@ -5,7 +5,7 @@ Arbetar på monitorns händelser (Event) och ger per adress en konfidenspoäng 0
 
 import collections
 
-MIN_REQ = 15        # minst så många frågor till adressen innan vi bedömer
+MIN_REQ = 30        # minst så många frågor till adressen innan vi bedömer
 FLAG = 0.5          # poäng från vilken vi visar "Misstänkt adresskrock"
 
 
@@ -80,7 +80,7 @@ def analyze(events, rows=None):
         if q < MIN_REQ:
             continue
         score, why = 0.0, []
-        if d["dup"] >= 2 and d["dup"] / q >= 0.02:
+        if d["dup"] >= 3 and d["dup"] / q >= 0.03:
             score += 0.45
             why.append(f"{d['dup']} dubbla svar på samma fråga")
         bad = d["crc"] + d["coll"]
@@ -111,7 +111,7 @@ def analyze(events, rows=None):
         if lens:
             score += 0.3
             why.append(f"olika svarslängd på samma fråga ({lens} frågetyper)")
-        if flips >= 3:
+        if flips >= max(3, 0.1 * d["resp"]):
             score += 0.25
             why.append(f"registervärden hoppar fram och tillbaka mellan två mönster ({flips} ggr)")
         bm, m1, m2 = _bimodal(d["rtt"])
@@ -123,7 +123,7 @@ def analyze(events, rows=None):
             score += 0.15
             why.append(f"samma fråga ger ibland exception, ibland normalt svar ({len(mixed)} frågetyper)")
         signals = len(why)
-        if signals < 2 and d["dup"] < 2:
+        if signals < 2 and d["dup"] < 3:
             score = min(score, 0.35)    # en enstaka indikation räcker inte
         score = round(min(1.0, score), 2)
         out[a] = {"poäng": score, "skäl": why, "misstänkt": score >= FLAG}

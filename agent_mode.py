@@ -132,10 +132,10 @@ def stepwise_detect(scan, say, baud=None, bauds=None, seconds=0.6):
         return None
     p = r[0]["parity"]
     say(" " + PAR_TXT.get(p, p))
-    say("Kollar stoppbitar…", end="")
-    r = scan((b,), (p,), M.STOPS, seconds)
-    s = r[0]["stop"] if r and r[0]["frames"] else (2 if p == "N" else 1)
-    say(f" {s}")
+    # Stoppbitar går inte att mäta passivt: en UART kontrollerar bara första stoppbiten, så 1 och 2
+    # ger exakt samma mottagning. Välj Modbus-standard (ingen paritet -> 2, annars 1). Påverkar inte lyssningen.
+    s = 2 if p == "N" else 1
+    say(f"Stoppbitar: {s} (Modbus-standard – 1/2 går inte att skilja passivt och påverkar inte avlyssningen)")
     return b, p, s
 
 

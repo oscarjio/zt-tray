@@ -173,3 +173,11 @@ hälsa under 90 %). Det stängs av efter 10 min (`ai.auto_minutes` i config) med
 autodetektering och lokal status ändå. AI får bara sända efter att du aktivt tillåtit det och bekräftat.
 
 **Adresskrock (v2.5.1):** två enheter på samma adress upptäcks även om bara en adress krånglar - dubbla svar, CRC/krockar koncentrerade till adressen, varierande längd/registervärden för samma fråga, två kluster i svarstid, ibland exception, förvrängda svar med rätt adress. Visas med konfidens som 'Misstänkt adresskrock på adress N' på startskärmen, adressraden, i konsolen och som larm. AI-agenten har verktyget address_clash.
+
+**Robusthet (v2.5.2):** dras USB-adaptern ur under körning återansluter programmet automatiskt när den är tillbaka
+(statistiken behålls, ny loggfil startas, FEL-banner "Adaptern tappad" under tiden). Startar programmet utan adapter
+väntar det och startar själv när kabeln kopplas in. Upptagen port (Seriemonitor-fliken, PuTTY, annan ZT-Tray)
+rapporteras tydligt i stället för "ingen trafik". Fel AI-nyckel/inget internet stoppar aldrig den lokala felsökningen.
+Paketlistan håller max 100 000 händelser i minnet (för heldagskörning). Stoppbitar avgörs inte passivt (en UART
+kontrollerar bara första stoppbiten) – Modbus-standard används: 8N2 vid ingen paritet, annars 1. Trasig config.json
+sparas som `config.json.trasig-<tid>` och standard används.

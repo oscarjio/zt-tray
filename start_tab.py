@@ -136,10 +136,18 @@ class StartTab:
         if mt is None or mt.cap is not None:
             return
         c = self._candidates()
+        if self.t0 is not None:
+            return
         if len([1 for _l, i in c if i.get("usb") or i.get("rs485")]) == 1:
             self.start()
-        elif not c:
-            self.lbl_det.config(text="Ingen USB-RS485-adapter hittad. Koppla in kabeln och tryck START.")
+        else:
+            if not c:
+                self.lbl_det.config(text="Ingen USB-RS485-adapter hittad ännu. Koppla in kabeln – "
+                                         "jag startar automatiskt när den dyker upp (eller tryck START).")
+            # vänta på att adaptern kopplas in (startar själv när exakt en dyker upp, max 30 min)
+            self._wait_n = getattr(self, "_wait_n", 0) + 1
+            if self._wait_n < 900:
+                self.f.after(2000, self._auto_start)
 
     def start(self):
         self._hook()
@@ -176,8 +184,16 @@ class StartTab:
         self.t0 = time.time()
         self._set("VÄNTAR", "Söker inställningar…", ["Letar baudrate, paritet och stoppbitar (lyssnar bara, sänder inget)."])
         ai = getattr(self.ui, "ai", None)
+        ok = False
         if ai is not None and ai.key():
-            ai.start_agent_mode(info, None, [], "Helhetsfelsökning av Modbus RTU-bussen (startskärmen)")
+            try:
+                ok = ai.start_agent_mode(info, None, [], "Helhetsfelsökning av Modbus RTU-bussen (startskärmen)") is not False
+            except Exception as e:
+                self._from_console("err", f"AI kunde inte starta ({type(e).__name__}) – kör lokal felsökning utan AI.\n")
+            if not ok:
+                self._from_console(None, "Fortsätter med lokal felsökning (allt utom AI-dialogen fungerar).\n")
+        if ok:
+            pass
         elif mt.console:
             mt.console.start()
         else:
@@ -296,6 +312,11 @@ class StartTab:
             if mt is not None and self.t0 is not None:
                 mon = mt.mon
                 running = mt.cap is not None
+                lost = getattr(mt, "_lost", None)
+                if lost:
+                    self._set("FEL", "Adaptern tappad – återansluter automatiskt…",
+                              [f"{' + '.join(lost['ports'])} försvann för {time.time() - lost['since']:.0f} s sedan",
+                               "Kontrollera USB-kabeln/adaptern – statistiken finns kvar"])
                 if mon is not None and running:
                     lvl, head, det = AM.assess(mon.stats_rows(), True, mon.crc_ok_frames, mon.bad_frames,
                                                sum(dict(mon.line_err_total).values()), time.time() - self.t0,

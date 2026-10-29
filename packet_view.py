@@ -11,6 +11,44 @@ from tkinter import ttk
 import modbus_monitor as M
 
 MAX_ROWS = 3000
+KEEP_EVENTS = 100000    # max händelser i minnet (äldsta släpps, numreringen behålls)
+
+
+class EventStore:
+    """Lista med global numrering men begränsat minne (lång körning hela dagen)."""
+
+    def __init__(self, keep=KEEP_EVENTS):
+        self.keep = keep
+        self.base = 0
+        self.items = []
+
+    def __len__(self):
+        return self.base + len(self.items)
+
+    def __getitem__(self, i):
+        if isinstance(i, slice):
+            return self.items[i]
+        if i < 0:
+            return self.items[i]
+        if i < self.base:
+            raise IndexError("händelsen har släppts ur minnet")
+        return self.items[i - self.base]
+
+    def __iter__(self):
+        return iter(self.items)
+
+    def has(self, i):
+        return self.base <= i < len(self)
+
+    def extend(self, evs):
+        self.items.extend(evs)
+        if len(self.items) > self.keep:
+            drop = len(self.items) - int(self.keep * 0.8)
+            del self.items[:drop]
+            self.base += drop
+
+    def indexed(self):
+        return enumerate(self.items, self.base)
 
 COLORS = {  # status -> (bakgrund, text)
     "timeout": ("#7a1f1f", "#ffd7d5"),   # inget svar: röd
@@ -71,7 +109,7 @@ class PacketView:
         self.names = names
         self.timeout_s = timeout_s
         self.on_status = on_status or (lambda s: None)
-        self.events = []        # alla händelser (index = nr - 1)
+        self.events = EventStore()   # händelser (index = nr - 1), begränsat minne
         self.t0 = 0.0
         self.pred = None
         self.errors_only = tk.BooleanVar(value=False)
@@ -134,7 +172,7 @@ class PacketView:
 
     # ------------------------------------------------------------ data
     def clear(self):
-        self.events = []
+        self.events = EventStore()
         self.tv.delete(*self.tv.get_children())
         self.txt.delete("1.0", "end")
 
@@ -179,7 +217,7 @@ class PacketView:
         return f"{a} {n}" if n else str(a)
 
     def _row(self, idx, e):
-        prev = self.events[idx - 1].t if idx > 0 else e.t
+        prev = self.events[idx - 1].t if self.events.has(idx - 1) else e.t
         st = M.ev_status(e)
         resp = M.ev_responder(e)
         asked = e.asked if e.kind not in ("junk", "collision", "gap", "info") or e.asked is not None else None
@@ -211,7 +249,7 @@ class PacketView:
 
     def refilter(self):
         self.tv.delete(*self.tv.get_children())
-        idxs = [i for i, e in enumerate(self.events) if self._match(e)][-MAX_ROWS:]
+        idxs = [i for i, e in self.events.indexed() if self._match(e)][-MAX_ROWS:]
         for i in idxs:
             self._insert(i, self.events[i])
         if self.tv.get_children() and not self.paused:
@@ -259,7 +297,7 @@ class PacketView:
         n = len(kids)
         for k in range(1, n + 1):
             iid = kids[(pos + k * step) % n]
-            if self._hit(self.events[int(iid)], q, qhex):
+            if self.events.has(int(iid)) and self._hit(self.events[int(iid)], q, qhex):
                 if not self.paused:
                     self.toggle_pause()
                 self.tv.selection_set(iid)
@@ -279,7 +317,7 @@ class PacketView:
                 if x.kind in ("req", "bcast") and j > idx:
                     break
         elif e.req is not None:
-            for j in range(idx - 1, max(-1, idx - 40), -1):
+            for j in range(idx - 1, max(self.events.base - 1, idx - 40), -1):
                 x = self.events[j]
                 if x.kind in ("req", "bcast") and x.raw == bytes(e.req):
                     return j
@@ -287,13 +325,15 @@ class PacketView:
 
     def _on_select(self, _e=None):
         for iid in self._pair_iids:
-            if self.tv.exists(iid):
+            if self.tv.exists(iid) and self.events.has(int(iid)):
                 self.tv.item(iid, tags=(self._tag(self.events[int(iid)]),))
         self._pair_iids = []
         sel = self.tv.selection()
         if not sel:
             return
         idx = int(sel[0])
+        if not self.events.has(idx):
+            return
         e = self.events[idx]
         j = self.pair_of(idx)
         if j is not None and self.tv.exists(str(j)):

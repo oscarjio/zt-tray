@@ -84,6 +84,8 @@ class ModbusTab:
         mc = self.app.cfg.get("modbus") or {}
         self.mon = None
         self.cap = None
+        self._lost = None        # {"ports", "cfg", "since", "next", "log"} när adaptern tappats
+        self._cap_args = None
         self.t0 = 0.0
         self.clock = time.perf_counter
         self.compare_win = None
@@ -326,6 +328,9 @@ class ModbusTab:
 
     # ------------------------------------------------------------ start/stopp
     def toggle(self):
+        if self._lost:
+            self.stop()
+            return
         if self.cap:
             self.stop()
             return
@@ -357,6 +362,8 @@ class ModbusTab:
                                  "Upptagen av annat program (t.ex. Seriemonitor-fliken)?", parent=self.f)
             return
         self._begin(mon, cap, time.perf_counter())
+        self._lost = None
+        self._cap_args = (ports, (baud, par, stop), bool(log_path))
         self.log_path = log_path
         self.btn_start.config(text="Stoppa")
         C.log(f"modbus: lyssnar på {' + '.join(ports)} {baud} 8{par}{stop}")
@@ -376,6 +383,7 @@ class ModbusTab:
         self._status_msg("Simulering (40 s, med inbyggda fel: timeout, CRC, sena svar, krock, stopp av adress 5)")
 
     def stop(self):
+        self._lost = None
         cap, self.cap = self.cap, None
         if cap:
             cap.stop()
@@ -628,6 +636,80 @@ class ModbusTab:
         self._link = (col, txt)
         self.lbl_link.config(text="● " + txt, bg=DOT[col])
 
+    # ------------------------------------------------------------ tappad adapter
+    LOST_GIVE_UP_S = 3600
+
+    def _say(self, tag, msg):
+        C.log("modbus: " + msg)
+        try:
+            self._status_msg(msg)
+        except Exception:
+            pass
+        if self.console is not None:
+            try:
+                self.console.write(tag, msg + "\n", stream=False)
+            except Exception:
+                pass
+
+    def _port_lost(self):
+        """Lästråden dog (USB-kabel ut, drivrutin, port borta). Behåll statistiken och försök återansluta
+        automatiskt i stället för att stanna med en modal ruta."""
+        cap = self.cap
+        err = getattr(cap, "error", "") or "; ".join(getattr(c, "error", "") for c in getattr(cap, "caps", [])
+                                                      if getattr(c, "error", ""))
+        if isinstance(cap, SimCapture) or not self._cap_args:
+            self.stop()
+            return
+        try:
+            cap.stop()
+        except Exception:
+            pass
+        self.cap = None
+        self.btn_start.config(text="Stoppa")
+        ports, cfg, logging = self._cap_args
+        self._lost = {"ports": ports, "cfg": cfg, "since": time.time(), "next": time.time() + 1.0,
+                      "log": logging, "tries": 0}
+        self._say("err", f"⚠ Porten {' + '.join(ports)} tappades ({err or 'okänt fel'}). "
+                         "Kontrollera USB-kabeln – jag återansluter automatiskt när adaptern är tillbaka.")
+
+    def _try_reconnect(self):
+        lost = self._lost
+        now = time.time()
+        if now < lost["next"]:
+            return
+        lost["next"] = now + 2.0
+        lost["tries"] += 1
+        if now - lost["since"] > self.LOST_GIVE_UP_S:
+            self._lost = None
+            self.btn_start.config(text="Starta")
+            self._say("err", "Gav upp återanslutningen efter 60 min – tryck Starta när adaptern sitter i.")
+            return
+        ports, (baud, par, stop), logging = lost["ports"], lost["cfg"], lost["log"]
+        log_path = None
+        if logging:
+            try:
+                os.makedirs(LOG_DIR, exist_ok=True)
+                log_path = os.path.join(LOG_DIR, time.strftime("bus_%Y%m%d-%H%M%S.zmlog"))
+            except Exception:
+                log_path = None
+        mon = self.mon
+        try:
+            mon.resync()
+        except Exception:
+            pass
+        cap = (M.MultiCapture(mon, ports, baud, par, stop, log_path=log_path) if len(ports) > 1
+               else M.Capture(mon, ports[0], baud, par, stop, log_path=log_path))
+        try:
+            cap.start()
+        except Exception:
+            return
+        self.cap = cap
+        self._lost = None
+        self.log_path = log_path or self.log_path
+        self.btn_start.config(text="Stoppa")
+        self._say("ok", f"✓ Återansluten till {' + '.join(ports)} efter {now - lost['since']:.0f} s – lyssnar igen "
+                        "(statistiken behölls).")
+
     # ------------------------------------------------------------ uppdatering
     def _poll(self):
         try:
@@ -647,10 +729,9 @@ class ModbusTab:
         if not self.cap and self._tick % 10 == 0:
             self.refresh_ports()
         if self.cap and not self.cap.th.is_alive():
-            err = self.cap.error
-            self.stop()
-            if err:
-                messagebox.showerror("Modbus", f"Porten stängdes: {err}", parent=self.f)
+            self._port_lost()
+        if self._lost:
+            self._try_reconnect()
         if self._tick % 5 == 0:
             self._names_cache = self.names()
         if not self.mon:

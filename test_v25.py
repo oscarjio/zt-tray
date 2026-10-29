@@ -223,7 +223,7 @@ def test_stepwise_detect_local_no_key():
     res = AM.stepwise_detect(scan, lambda s, end="\n": out.append(s + end))
     txt = "".join(out)
     assert res == (57600, "E", 1), res
-    assert "Söker baudrate… hittat 57600" in txt and "Kollar paritet… even" in txt and "Kollar stoppbitar… 1" in txt
+    assert "Söker baudrate… hittat 57600" in txt and "Kollar paritet… even" in txt and "Stoppbitar: 1" in txt
 
 
 def test_console_commands():
