@@ -99,6 +99,7 @@ class StartTab:
         self.health = AM.BusHealth()
         self._last_ev_t = 0.0
         self._mon_id = None
+        self.clash, self._clash_t, self._clash_told = {}, 0.0, set()
         self._hooked = False
         f.after(1500, self._auto_start)
         f.after(1000, self._tick)
@@ -227,6 +228,7 @@ class StartTab:
         now = time.time()
         if self._mon_id != id(mon):
             self._mon_id, self.health, self._last_ev_t = id(mon), AM.BusHealth(), 0.0
+            self.clash, self._clash_t, self._clash_told = {}, 0.0, set()
         rows = mon.stats_rows()
         self.health.sample(rows, now)
         p1, pt = AM.BusHealth.pct(self.health.last(60)), AM.BusHealth.pct(self.health.total)
@@ -235,9 +237,22 @@ class StartTab:
         self.lbl_h2.config(text=f"senaste minut  |  total {f(pt)}")
         self._draw()
         names = getattr(mt, "_names_cache", {}) or {}
+        if now - self._clash_t >= 3:
+            self._clash_t = now
+            import addrclash as X
+            self.clash = X.analyze(mon.events)
+            for a, r in self.clash.items():
+                if r["misstänkt"] and a not in self._clash_told:
+                    self._clash_told.add(a)
+                    msg = X.headline(a, r)
+                    if mt.console:
+                        mt.console.write("alarm", time.strftime("%H:%M ") + "LARM: " + msg + "\n", stream=False)
+                    ai = getattr(self.ui, "ai", None)
+                    if ai is not None and hasattr(ai, "_alarm"):
+                        ai._alarm("LARM: " + msg)
         sel = self.tv.get_children()
         self.tv.delete(*sel)
-        for a, n, h, mi, se, kr, cause, lv in AM.addr_rows(rows, names, (mon.events[-1].t if mon.events else None)):
+        for a, n, h, mi, se, kr, cause, lv in AM.addr_rows(rows, names, (mon.events[-1].t if mon.events else None), self.clash):
             self.tv.insert("", "end", values=(f"{a}" + (f"  {n}" if n else ""), f"{h:.0f} %", mi, se, kr, cause), tags=(lv,))
         evs = [e for e in list(mon.events)[-40:] if e.t > self._last_ev_t]
         if evs:

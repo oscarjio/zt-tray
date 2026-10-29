@@ -285,6 +285,55 @@ def test_common_cause_and_automode():
     assert "kvar" in am.status(now=1700)
 
 
+def _sim_mon(faults, seed=1, dur=30):
+    import modbus_monitor as M
+    mon = M.Monitor(19200, "E", 1)
+    for t, d in M.simulate(duration=dur, faults=faults, seed=seed):
+        mon.feed(t, d)
+    return mon
+
+
+def test_address_clash_twin_on_1():
+    import addrclash as X
+    import agent_mode as AM
+    for seed in (1, 2, 3):
+        mon = _sim_mon({"twin": {1: {}}}, seed)
+        sus = X.suspects(mon.events)
+        assert list(sus) == [1], (seed, X.analyze(mon.events))
+        assert sus[1]["poäng"] >= 0.7
+    # subtil variant: tvillingen svarar bara ibland, inga krockar/dubbelsvar
+    mon = _sim_mon({"twin": {1: {"both": 0, "after": 0, "only": 0.3}}})
+    assert list(X.suspects(mon.events)) == [1]
+    lvl, head, det = AM.assess(mon.stats_rows(), True, mon.crc_ok_frames, mon.bad_frames, 0, 30, {}, mon.events)
+    assert any("Misstänkt adresskrock på adress 1" in d for d in det), det
+    rows = AM.addr_rows(mon.stats_rows(), {}, None, X.analyze(mon.events))
+    assert rows[0][0] == 1 and "ADRESSKROCK" in rows[0][6] and rows[0][7] == "FEL"
+
+
+def test_address_clash_no_false_positives():
+    import addrclash as X
+    import modbus_monitor as M
+    for seed in (1, 2, 3):
+        assert X.suspects(_sim_mon({}, seed).events) == {}
+        assert X.suspects(_sim_mon(M.DEMO_FAULTS, seed).events) == {}
+    mon = _sim_mon({"twin": {1: {}}})
+    res = X.analyze(mon.events)
+    assert all(not r["misstänkt"] for a, r in res.items() if a != 1)
+
+
+def test_address_clash_tool():
+    import ai_agent as A
+    import json
+    ag = A.Agent(SimHost(), None)
+    r = json.loads(ag.run_tool("address_clash", {}))
+    assert isinstance(r, list) and all("poäng" in x for x in r)
+    s = json.loads(ag.run_tool("slave_stats", {}))
+    assert all("adresskrock_poäng" in x for x in s)
+    names = [t["function"]["name"] for t in A.READ_TOOLS]
+    assert "address_clash" in names
+    assert "ADRESSKROCK" in A.SYSTEM
+
+
 if __name__ == "__main__":
     fails = 0
     for n, f in list(globals().items()):

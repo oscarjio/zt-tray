@@ -1641,9 +1641,32 @@ def simulate(duration=10.0, baud=19200, parity="E", stop=1, slaves=(1, 2, 3, 4, 
                 put(resp, t + 0.6 + delay, s)
                 t += 0.6 + delay + 0.001
                 continue
+            twin = faults.get("twin", {}).get(s)
+            if twin is not None and rnd.random() < twin.get("only", 0.3):
+                # bara tvillingen svarar (den andra enheten upptagen) - egna värden, egen svarstid
+                if fc == 3 and extra_addr is None:
+                    resp = with_crc(bytes([s, 3, 8]) + bytes([0xBE, 0xEF] * 4)) if rnd.random() < 0.6 else \
+                        with_crc(bytes([s, 3, 2, 0xBE, 0xEF]))
+                elif fc == 3:
+                    resp = with_crc(bytes([s, 0x83, 2]))
+                delay = twin.get("delay", 0.012) + rnd.random() * 0.001
             t = put(resp, t + delay, s)
             if p("dup", s):
                 t = put(_resp_for(req, cycle + 7), t + 0.002, s)
+            twin = faults.get("twin", {}).get(s)
+            if twin is not None:
+                # andra enheten med samma adress: svarar på samma fråga med egna värden/annan svarstid
+                tw = with_crc(bytes([s, 3, 8]) + bytes([0xBE, 0xEF] * 4)) if fc == 3 and extra_addr is None else (
+                    with_crc(bytes([s, fc | 0x80, 2])) if fc == 3 else _resp_for(req, cycle))
+                if fc == 3 and extra_addr is None and rnd.random() < 0.4:
+                    tw = with_crc(bytes([s, 3, 2, 0xBE, 0xEF]))  # annan längd
+                tw_delay = twin.get("delay", 0.012)
+                r = rnd.random()
+                if r < twin.get("both", 0.25):
+                    put(tw, t - len(resp) * ct + 0.0004, s)          # svarar samtidigt -> förvrängt
+                elif r < twin.get("both", 0.25) + twin.get("after", 0.25):
+                    t = put(tw, t + tw_delay - delay, s)            # dubbelsvar
+            t += poll_gap
             t += poll_gap
         if rnd.random() < faults.get("noise", 0):
             t = put(bytes(rnd.randrange(256) for _ in range(3)), t, "noise")

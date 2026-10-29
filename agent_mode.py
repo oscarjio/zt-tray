@@ -195,6 +195,11 @@ def assess(rows, running, frames_ok, bad_frames, uart_err, seconds, names=None, 
         if t not in det:
             det.append(t)
             level = "VARNING" if level == "OK" else level
+    if events is not None:
+        import addrclash as X
+        for a, r in sorted(X.suspects(events).items()):
+            det.insert(0, X.headline(a, r) + ". Kontrollera att bara EN enhet har adress %d." % a)
+            level = "FEL" if r["poäng"] >= 0.7 else ("VARNING" if level == "OK" else level)
     failing = [r["slav"] for r in rows if r.get("frågor", 0) >= 3 and r.get("felprocent", 0) >= 5]
     if events is not None and len(failing) >= 2:
         import modbus_monitor as M
@@ -253,7 +258,7 @@ class BusHealth:
         return s
 
 
-def addr_rows(rows, names=None, now=None):
+def addr_rows(rows, names=None, now=None, clash=None):
     """En rad per adress: (adress, namn, hälsa%, missade, sena, krockar, orsak i klartext, nivå)."""
     names = names or {}
     out = []
@@ -269,6 +274,10 @@ def addr_rows(rows, names=None, now=None):
             cause, lvl = "Svarar inte" + (f" – {cause}" if cause else ""), "FEL"
         else:
             lvl = "FEL" if h < 80 else "VARNING" if h < 95 else "OK"
+        c = (clash or {}).get(r["slav"])
+        if c and c.get("misstänkt"):
+            cause = f"MISSTÄNKT ADRESSKROCK ({int(c['poäng'] * 100)} %) – " + (c["skäl"][0] if c["skäl"] else "")
+            lvl = "FEL"
         n = names.get(r["slav"]) or names.get(str(r["slav"])) or ""
         out.append((r["slav"], n, h, r.get("timeout", 0), r.get("sena", 0), r.get("krockar", 0),
                     cause or "–", lvl))
@@ -297,7 +306,7 @@ def common_cause(events, failing, err_kinds=None):
 
 
 AUTO_PROMPT = ("Autoläge ({reason}): gör en grundlig felsökning av bussen nu med verktygen. Om flera adresser felar, "
-               "avgör om det är gemensam orsak (samtidigt = bussproblem) eller enhetsproblem. Svara kort: börja med "
+               "avgör om det är gemensam orsak (samtidigt = bussproblem) eller enhetsproblem. Överväg alltid adresskrock (address_clash). Svara kort: börja med "
                "'LARM:' vid allvarligt fel annars 'STATUS:', sedan fynd per adress och trolig orsak, max 5 meningar.")
 
 

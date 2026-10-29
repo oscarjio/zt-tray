@@ -224,6 +224,10 @@ def _fn(name, desc, props=None, req=()):
 
 
 READ_TOOLS = [
+    _fn("address_clash", "Adresskrock-analys per adress (två enheter med samma slavadress): konfidenspoäng 0..1 och skäl "
+        "(dubbla svar, CRC/krockar koncentrerade till adressen, varierande längd/registervärden för samma fråga, "
+        "bimodal svarstid, ibland exception, förvrängda svar med rätt adress).",
+        {"slave": {"type": "integer", "description": "valfri adress"}}),
     _fn("get_status", "Länkstatus, linjeinställning, bytes, giltiga/trasiga ramar, UART-fel, övervakningstid, automatläge."),
     _fn("slave_stats", "Statistik per slavadress (frågor, svar, timeouts, CRC, exceptions, sena, krockar, svarstider, UART-fel).",
         {"slave": {"type": "integer", "description": "valfri adress"}}),
@@ -263,7 +267,7 @@ SEND_TOOLS = [
         {"start": {"type": "integer"}, "end": {"type": "integer"}}, ["start", "end"]),
 ]
 
-SYSTEM = """Du är en erfaren felsökare av RS485/Modbus RTU inbyggd i verktyget zt-tray. Du ser trafik som en passiv
+SYSTEM = """Överväg alltid ADRESSKROCK (två enheter med samma adress) när en adress krånglar, även om det bara är en adress - använd verktyget address_clash. Du är en erfaren felsökare av RS485/Modbus RTU inbyggd i verktyget zt-tray. Du ser trafik som en passiv
 lyssnare har fångat (PLC = master, motordrivare/enheter = slavar) via verktyg. Svara på svenska, kort och konkret.
 Arbetssätt: hämta status och slavstatistik först, borra sedan ned med sökning/incidenter/paket runt tidpunkter.
 Skilj på: fel inställning (baud/paritet/stoppbitar - UART-fel, inga giltiga ramar), A/B omkastade (trafik men inget
@@ -342,6 +346,14 @@ class Agent:
             st["automatläge"] = self.auto["desc"] if self.auto else "av"
             st["fel_i_journal"] = len(self.journal.errors)
             return st
+        if name == "address_clash":
+            mon = h.mon()
+            if mon is None:
+                return {"fel": "ingen lyssning"}
+            import addrclash as X
+            res = X.analyze(mon.events)
+            return [{"slav": k, **v} for k, v in sorted(res.items())
+                    if a.get("slave") is None or k == a["slave"]]
         if name == "slave_stats":
             mon = h.mon()
             if mon is None:
@@ -350,12 +362,15 @@ class Agent:
             keep = ("slav", "frågor", "svar", "timeout", "crc", "exception", "sena", "krockar", "feladr",
                     "linjefel", "trasiga_svar", "felprocent", "min", "medel", "max", "p99", "senaste_fel",
                     "exc_koder")
+            import addrclash as X
+            clash = X.analyze(mon.events)
             out = []
             for r in mon.stats_rows():
                 if a.get("slave") is not None and r["slav"] != a["slave"]:
                     continue
                 d = {k: (round(r[k], 1) if isinstance(r.get(k), float) else r.get(k)) for k in keep}
                 d["namn"] = names.get(r["slav"], "")
+                d["adresskrock_poäng"] = clash.get(r["slav"], {}).get("poäng", 0.0)
                 if r.get("senaste_fel_t"):
                     d["senaste_fel_tid"] = _fmt(h.to_wall(r["senaste_fel_t"]))
                 out.append(d)

@@ -171,3 +171,5 @@ från PyPI första gången och kontrolleras med sha256. Nyckeln sparas i config 
 hälsa under 90 %). Det stängs av efter 10 min (`ai.auto_minutes` i config) med tydligt meddelande – tryck
 **Kör 10 min till**. Nedräkning och tokenanvändning visas. Manuella frågor fungerar alltid. Utan nyckel fungerar
 autodetektering och lokal status ändå. AI får bara sända efter att du aktivt tillåtit det och bekräftat.
+
+**Adresskrock (v2.5.1):** två enheter på samma adress upptäcks även om bara en adress krånglar - dubbla svar, CRC/krockar koncentrerade till adressen, varierande längd/registervärden för samma fråga, två kluster i svarstid, ibland exception, förvrängda svar med rätt adress. Visas med konfidens som 'Misstänkt adresskrock på adress N' på startskärmen, adressraden, i konsolen och som larm. AI-agenten har verktyget address_clash.
