@@ -1,8 +1,8 @@
 """
-Konfig fÃ¶r ZT-Tray v2.
+Konfig fÃƒÂ¶r ZT-Tray v2.
 
-Samma JSON-format som v1 ("sites" ligger kvar ofÃ¶rÃ¤ndrat). Nya nycklar lÃ¤ggs till
-med standardvÃ¤rden nÃ¤r de saknas, sÃ¥ en gammal config.json frÃ¥n v1 fungerar direkt.
+Samma JSON-format som v1 ("sites" ligger kvar ofÃƒÂ¶rÃƒÂ¤ndrat). Nya nycklar lÃƒÂ¤ggs till
+med standardvÃƒÂ¤rden nÃƒÂ¤r de saknas, sÃƒÂ¥ en gammal config.json frÃƒÂ¥n v1 fungerar direkt.
 """
 
 import copy
@@ -21,7 +21,7 @@ else:
 CONFIG_PATH = APP_DIR / "config.json"
 LOG_PATH = APP_DIR / "zt-tray.log"
 APP_NAME = "ZT-Tray"
-APP_VERSION = "2.4.0"
+APP_VERSION = "2.5.0"
 
 
 def log(msg):
@@ -54,7 +54,7 @@ DEFAULT_CONFIG = {
             "subnet_mask": "255.255.255.0",
         }
     ],
-    # IP-profiler. "?" i network eller host = frÃ¥gas vid varje byte.
+    # IP-profiler. "?" i network eller host = frÃƒÂ¥gas vid varje byte.
     "ip_presets": [
         _p("192.168.5.x", "192.168.5"),
         _p("192.168.0.x", "192.168.0"),
@@ -64,20 +64,20 @@ DEFAULT_CONFIG = {
         _p("10.20.?.x", "10.20.?"),
     ],
     "settings": {
-        "interface": "",          # tomt = vÃ¤ljs automatiskt (fÃ¶rsta fysiska Ethernet)
+        "interface": "",          # tomt = vÃƒÂ¤ljs automatiskt (fÃƒÂ¶rsta fysiska Ethernet)
         "notifications": True,
         "pin_tray": True,
     },
     "discovery": {
         "duration": 5,
-        # NÃ¤t som ARP-svepas helt (utÃ¶ver de som finns i IP-profilerna)
+        # NÃƒÂ¤t som ARP-svepas helt (utÃƒÂ¶ver de som finns i IP-profilerna)
         "extra_subnets": ["192.168.2", "192.168.100", "192.168.178",
                           "192.168.250", "10.0.0", "10.10.10", "172.16.0"],
     },
-    "last_values": {},            # senast inmatade vÃ¤rde per "?"-fÃ¤lt
-    # Emulerat uttag mot en annan ZT-Tray. IP sÃ¤tts bara nÃ¤r role Ã¤r "verktyg".
+    "last_values": {},            # senast inmatade vÃƒÂ¤rde per "?"-fÃƒÂ¤lt
+    # Emulerat uttag mot en annan ZT-Tray. IP sÃƒÂ¤tts bara nÃƒÂ¤r role ÃƒÂ¤r "verktyg".
     "uttag": {
-        "role": "uttag",          # "uttag" = kabeln sitter hÃ¤r, "verktyg" = TIA/GX kÃ¶rs hÃ¤r
+        "role": "uttag",          # "uttag" = kabeln sitter hÃƒÂ¤r, "verktyg" = TIA/GX kÃƒÂ¶rs hÃƒÂ¤r
         "interface": "",
         "peer_ip": "",
         "tool_ip": "",
@@ -98,7 +98,7 @@ DEFAULT_CONFIG = {
 
 
 def _merge(defaults, data):
-    """Fyll i saknade nycklar frÃ¥n defaults (rekursivt fÃ¶r dictar)."""
+    """Fyll i saknade nycklar frÃƒÂ¥n defaults (rekursivt fÃƒÂ¶r dictar)."""
     out = copy.deepcopy(data)
     for k, v in defaults.items():
         if k not in out:
@@ -116,7 +116,7 @@ def load_config():
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
     except Exception as e:
-        log(f"Kunde inte lÃ¤sa config ({e}) â€” anvÃ¤nder standard")
+        log(f"Kunde inte lÃƒÂ¤sa config ({e}) Ã¢â‚¬â€ anvÃƒÂ¤nder standard")
         return copy.deepcopy(DEFAULT_CONFIG)
     return _merge(DEFAULT_CONFIG, data)
 
@@ -128,7 +128,7 @@ def save_config(cfg):
     os.replace(tmp, CONFIG_PATH)
 
 
-# ---------------------------------------------------------------- IP-hjÃ¤lp
+# ---------------------------------------------------------------- IP-hjÃƒÂ¤lp
 
 def prefix_to_mask(prefix):
     return str(ipaddress.IPv4Network(f"0.0.0.0/{int(prefix)}").netmask)
@@ -139,14 +139,14 @@ def mask_to_prefix(mask):
 
 
 def preset_parts(preset):
-    """['192','168','5','200'] â€” kan innehÃ¥lla '?'."""
+    """['192','168','5','200'] Ã¢â‚¬â€ kan innehÃƒÂ¥lla '?'."""
     net = [p.strip() for p in str(preset.get("network", "")).split(".") if p.strip() != ""]
     host = [p.strip() for p in str(preset.get("host", "")).split(".") if p.strip() != ""]
     return net + host
 
 
 def preset_questions(preset):
-    """Index fÃ¶r de oktetter som ska frÃ¥gas."""
+    """Index fÃƒÂ¶r de oktetter som ska frÃƒÂ¥gas."""
     return [i for i, p in enumerate(preset_parts(preset)) if p == "?"]
 
 
@@ -162,9 +162,9 @@ def valid_octet(s):
 
 def resolve_preset(preset, answers=None):
     """
-    Returnera (ip, mask, gateway). answers = {index: "45"} fÃ¶r '?'-fÃ¤lt.
-    Gateway fÃ¥r ocksÃ¥ innehÃ¥lla '?', dÃ¥ Ã¥teranvÃ¤nds svaren pÃ¥ samma position.
-    Kastar ValueError om nÃ¥got inte stÃ¤mmer.
+    Returnera (ip, mask, gateway). answers = {index: "45"} fÃƒÂ¶r '?'-fÃƒÂ¤lt.
+    Gateway fÃƒÂ¥r ocksÃƒÂ¥ innehÃƒÂ¥lla '?', dÃƒÂ¥ ÃƒÂ¥teranvÃƒÂ¤nds svaren pÃƒÂ¥ samma position.
+    Kastar ValueError om nÃƒÂ¥got inte stÃƒÂ¤mmer.
     """
     answers = answers or {}
     parts = preset_parts(preset)
@@ -187,12 +187,12 @@ def resolve_preset(preset, answers=None):
         ipaddress.IPv4Address(gw)
     iface = ipaddress.IPv4Interface(f"{ip}/{prefix}")
     if iface.ip in (iface.network.network_address, iface.network.broadcast_address) and prefix < 31:
-        raise ValueError(f"{ip} Ã¤r nÃ¤t- eller broadcastadress fÃ¶r /{prefix}")
+        raise ValueError(f"{ip} ÃƒÂ¤r nÃƒÂ¤t- eller broadcastadress fÃƒÂ¶r /{prefix}")
     return ip, mask, gw
 
 
 def preset_matches(preset, ip, prefix):
-    """StÃ¤mmer nuvarande ip/prefix med profilen? '?' matchar allt."""
+    """StÃƒÂ¤mmer nuvarande ip/prefix med profilen? '?' matchar allt."""
     parts = preset_parts(preset)
     if len(parts) != 4 or int(preset.get("prefix", 24)) != int(prefix):
         return False
@@ -203,7 +203,7 @@ def preset_matches(preset, ip, prefix):
 
 
 def preset_subnet(preset, last_values=None):
-    """'192.168.5' om profilens nÃ¤t Ã¤r kÃ¤nt (eller kÃ¤nt via senaste svar), annars None."""
+    """'192.168.5' om profilens nÃƒÂ¤t ÃƒÂ¤r kÃƒÂ¤nt (eller kÃƒÂ¤nt via senaste svar), annars None."""
     parts = preset_parts(preset)
     if len(parts) != 4 or int(preset.get("prefix", 24)) != 24:
         return None

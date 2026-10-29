@@ -19,7 +19,12 @@ jobs:
       - name: Installera beroenden
         run: python -m pip install -r requirements.txt
       - name: Tester
-        run: python -m unittest test_modbus_monitor test_modbus_extra
+        run: |
+          python -m unittest test_modbus_monitor test_modbus_extra
+          python test_v24.py
+          python test_v25.py
+        env:
+          ZT_SKIP_REAL_LLM: "1"
       - name: Bygg exe (PyInstaller via spec)
         run: python -m PyInstaller --noconfirm zt-tray.spec
       - name: Kontrollera exe

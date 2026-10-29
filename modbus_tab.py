@@ -213,8 +213,17 @@ class ModbusTab:
         ttk.Button(r2c, text="Öppna loggmapp", command=self.open_dir).pack(side="left", padx=6)
 
         # --- paketvy
-        self.pv_frame = ttk.Frame(f)
-        self.pv_frame.pack(fill="both", expand=True, pady=(6, 0))
+        self.pv_paned = ttk.PanedWindow(f, orient="horizontal")
+        self.pv_paned.pack(fill="both", expand=True, pady=(6, 0))
+        self.pv_frame = ttk.Frame(self.pv_paned)
+        self.pv_paned.add(self.pv_frame, weight=3)
+        try:
+            import agent_console
+            self.console = agent_console.AgentConsole(self.pv_paned, self)
+            self.pv_paned.add(self.console.f, weight=2)
+        except Exception as e:
+            self.console = None
+            C.log(f"agentkonsol: {type(e).__name__}: {e}")
         self.pv = packet_view.PacketView(self.pv_frame, names=lambda: self._names_cache,
                                          timeout_s=self.timeout_s, on_status=self._status_msg)
         self._status_txt = ""
@@ -299,7 +308,7 @@ class ModbusTab:
             self.adv.pack_forget()
             self.btn_adv.config(text="Avancerat ▸")
         else:
-            self.adv.pack(fill="x", before=self.pv_frame)
+            self.adv.pack(fill="x", before=self.pv_paned)
             self.btn_adv.config(text="Avancerat ▾")
 
     def _stats_dbl(self, _e=None):

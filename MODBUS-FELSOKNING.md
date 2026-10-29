@@ -92,3 +92,26 @@ fullständiga manualer: http://www.everelettronica.it/manhw.html
 
 AI-fliken kan köra samma diagnos som ett verktyg, och kan (om du tillåter det) ändra
 inställningar och skicka testfrågor. Se README.
+
+## v2.5 – Startskärm, agentläge och Cursor-nyckel
+
+**Nästan one-click:** plugga i USB-RS485-kabeln och starta programmet. Fliken **Start** väljer adaptern själv
+(frågar bara om flera finns), startar lyssning, hittar baud/paritet/stoppbitar automatiskt (lyssnar bara, sänder inget)
+och börjar bevaka.
+
+Startskärmen visar:
+- Stor status **OK / VARNING / FEL** och klartext om vad som är fel och vilken enhet.
+- **Busshälsa** (% lyckade transaktioner senaste minut och totalt) med tidskurva: svar ok / missade / sena / krockar / CRC.
+- En rad per adress: hälsa, missade, sena, krockar och senaste felorsak – felande adresser överst.
+- Flera felande adresser analyseras gemensamt: fel **samtidigt** = troligen bussproblem, fel **var för sig** = enhetsproblem.
+- Agentens meddelanden och paketen rullar löpande. Paketlista, register och sändare finns under **Avancerat ▸**.
+
+**AI (valfritt):** Under Avancerat → AI-felsökning väljs leverantör *OpenRouter* eller *Cursor*. Cursor använder
+Cursors officiella SDK lokalt (debiteras mot din Cursor-plan). SDK-komponenten (~48 MB, proprietär licens) laddas ner
+från PyPI första gången och kontrolleras med sha256. Nyckeln sparas i config (visas maskerad) eller i miljövariabeln
+`CURSOR_API_KEY` – aldrig i loggar.
+
+**Autoläge:** med nyckel analyserar agenten bussen var 60:e sekund och direkt vid allvarligt fel (timeout-skur, krock,
+hälsa under 90 %). Det stängs av efter 10 min (`ai.auto_minutes` i config) med tydligt meddelande – tryck
+**Kör 10 min till**. Nedräkning och tokenanvändning visas. Manuella frågor fungerar alltid. Utan nyckel fungerar
+autodetektering och lokal status ändå. AI får bara sända efter att du aktivt tillåtit det och bekräftat.

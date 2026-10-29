@@ -243,7 +243,8 @@ READ_TOOLS = [
     _fn("registers", "Registervärden som setts i trafiken för en slav (värde, ändringar).",
         {"slave": {"type": "integer"}}, ["slave"]),
     _fn("autodetect", "Passiv auto-sökning av baud/paritet/stoppbitar/A-B-omkastning (lyssnar kort på varje "
-        "inställning, sänder inget). Avbryter lyssningen medan den pågår.", {"seconds": {"type": "number"}}),
+        "inställning, sänder inget). Avbryter lyssningen medan den pågår. apply=true byter lyssnaren till bästa "
+        "inställning om konfidensen är >= 60 %.", {"seconds": {"type": "number"}, "apply": {"type": "boolean"}}),
     _fn("set_line", "Ändra lyssnarens baud/paritet/stoppbitar (påverkar inte bussen).",
         {"baud": {"type": "integer"}, "parity": {"type": "string", "enum": ["N", "E", "O"]},
          "stop": {"type": "integer", "enum": [1, 2]}}, ["baud", "parity", "stop"]),
@@ -307,6 +308,10 @@ class Agent:
     # ---------------- verktyg
     def tools(self):
         return READ_TOOLS + (SEND_TOOLS if self.allow_send() else [])
+
+    def all_tools(self):
+        """Alla verktyg (sändverktygen spärras ändå i _tool om sändning inte är tillåten)."""
+        return READ_TOOLS + SEND_TOOLS
 
     def run_tool(self, name, args):
         try:
@@ -395,6 +400,8 @@ class Agent:
             rows = mon.regmap.rows(int(a["slave"]))
             return {"antal": len(rows), "register": [str(r)[:160] for r in rows[:80]]}
         if name == "autodetect":
+            if a.get("apply"):
+                return h.autodetect(float(a.get("seconds") or 2.0), apply=True)
             return h.autodetect(float(a.get("seconds") or 2.0))
         if name == "set_line":
             return h.set_line(int(a["baud"]), a["parity"], int(a["stop"]))
@@ -427,6 +434,9 @@ class Agent:
         c = (f"Nu: {_fmt(time.time())}. Lyssnare: {st.get('linje')} körs={st.get('körs')}. "
              f"Kända enheter: {json.dumps(self.host.names(), ensure_ascii=False)}. "
              f"Sändning tillåten för AI: {'ja (kräver bekräftelse)' if self.allow_send() else 'nej'}.")
+        if getattr(self, "focus", None):
+            c += (f"\nFOKUS: slav {', '.join(str(x) for x in self.focus)} - filtrera sökningar på dessa "
+                  "(t.ex. search_packets 'addr=N'), men notera om felet beror på andra enheter/bussen.")
         if self.auto:
             c += (f"\nAUTOMATLÄGE sedan {_fmt(self.auto['since'])}. Användarens felbeskrivning: {self.auto['desc']!r}. "
                   f"Incidenter hittills: {len(self.journal.incident_list(self.auto['since'], 2000))}. Om användaren "
@@ -438,6 +448,12 @@ class Agent:
         with self.lock:
             if self.auto and re.search(r"strular|nu händer|händer nu|felet nu|nu igen|nu kom", text, re.I):
                 self.journal.mark("ANVÄNDAREN: " + text)
+            if getattr(self.client, "provider", "") == "cursor":
+                ctx = "[Läge just nu] " + self._context()
+                ans, usage = self.client.run_agent(self, ctx + "\n\nAnvändaren: " + text, on_step=on_step,
+                                                   system=SYSTEM)
+                self._account(usage)
+                return ans
             self.history.append({"role": "user", "content": text})
             self.history = self.history[-30:]
             while self.history and self.history[0]["role"] != "user":
@@ -479,7 +495,12 @@ class Agent:
 
     def usage_text(self):
         u = self.usage
+        if getattr(self.client, "provider", "") == "cursor":
+            return (f"Cursor: {u['calls']} körningar, {u['prompt']} in + {u['completion']} ut tokens "
+                    "(debiteras mot din Cursor-plan)")
         return f"{u['calls']} anrop, {u['prompt']} in + {u['completion']} ut tokens, ≈ ${u['cost']:.4f}"
 
     def reset(self):
         self.history = []
+        if hasattr(self.client, "close"):
+            self.client.close()

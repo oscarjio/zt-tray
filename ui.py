@@ -266,6 +266,7 @@ class MainWindow:
         self.nb.pack(fill="both", expand=True, padx=14, pady=(6, 14))
         self.tabs = {}
         for key, title, builder in (
+            ("start", "Start", self._build_start),
             ("quick", "Snabbyte", self._build_quick),
             ("discover", "Hitta PLC", self._build_discover),
             ("presets", "IP-profiler", self._build_presets),
@@ -1219,6 +1220,14 @@ class MainWindow:
                 self.ut_tree.insert("", "end", iid=ip, values=(name, iface, ip, state))
 
     # ---------------------------------------------------------- Inställningar
+
+    def _build_start(self, f):
+        try:
+            import start_tab
+            self.start_tab = start_tab.StartTab(f, self)
+        except Exception as e:
+            C.log(f"Start-fliken kunde inte byggas: {type(e).__name__}: {e}")
+            ttk.Label(f, text=f"Startskärmen kunde inte startas: {e}").pack(anchor="w")
 
     def _build_modbus(self, f):
         try:
