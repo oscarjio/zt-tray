@@ -3,7 +3,7 @@ from PyInstaller.utils.hooks import collect_data_files
 from PyInstaller.utils.hooks import collect_submodules
 
 datas = []
-hiddenimports = ['PIL._tkinter_finder', 'modbus_tab', 'modbus_monitor', 'packet_view', 'serial_tab', 'serial', 'serial.tools', 'serial.tools.list_ports', 'serial.tools.list_ports_windows']
+hiddenimports = ['PIL._tkinter_finder', 'modbus_tab', 'modbus_monitor', 'packet_view', 'linecheck', 'modbus_master', 'master_tab', 'ai_agent', 'ai_tab', 'serial_tab', 'serial', 'serial.tools', 'serial.tools.list_ports', 'serial.tools.list_ports_windows']
 datas += collect_data_files('sv_ttk')
 hiddenimports += collect_submodules('scapy')
 

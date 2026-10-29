@@ -272,6 +272,8 @@ class MainWindow:
             ("zt", "ZeroTier", self._build_zt),
             ("uttag", "Uttag", self._build_uttag),
             ("modbus", "Modbus", self._build_modbus),
+            ("master", "Sändare", self._build_master),
+            ("ai", "AI-felsökning", self._build_ai),
             ("serial", "Seriemonitor", self._build_serial),
             ("settings", "Inställningar", self._build_settings),
         ):
@@ -1225,6 +1227,29 @@ class MainWindow:
         except Exception as e:
             C.log(f"Modbus-fliken kunde inte byggas: {e!r}")
             ttk.Label(f, text=f"Modbus-monitorn kunde inte startas: {e}").pack(anchor="w")
+
+    def _build_master(self, f):
+        self.master_tab = None
+        try:
+            import master_tab
+            if getattr(self, "modbus", None):
+                self.master_tab = master_tab.MasterTab(f, self, self.modbus)
+            else:
+                ttk.Label(f, text="Kräver Modbus-fliken.").pack(anchor="w")
+        except Exception as e:
+            C.log(f"Sändare-fliken kunde inte byggas: {e!r}")
+            ttk.Label(f, text=f"Sändare kunde inte startas: {e}").pack(anchor="w")
+
+    def _build_ai(self, f):
+        try:
+            import ai_tab
+            if getattr(self, "modbus", None) and getattr(self, "master_tab", None):
+                self.ai = ai_tab.AiTab(f, self, self.modbus, self.master_tab)
+            else:
+                ttk.Label(f, text="Kräver Modbus-fliken.").pack(anchor="w")
+        except Exception as e:
+            C.log(f"AI-fliken kunde inte byggas: {type(e).__name__}: {e}")
+            ttk.Label(f, text=f"AI-fliken kunde inte startas: {e}").pack(anchor="w")
 
     def _build_serial(self, f):
         try:

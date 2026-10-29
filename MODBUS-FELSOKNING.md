@@ -78,3 +78,17 @@ fullständiga manualer: http://www.everelettronica.it/manhw.html
 * 1 vs 2 stoppbitar går ofta inte att skilja passivt; spec: utan paritet → 2 stopp, med paritet → 1.
 * RFC2217-delning (serialshare) tar en klient åt gången.
 * Registervyn ser bara register som PLC:n faktiskt frågar efter; värden från FC01/02 är bitar, FC03/04 16-bit.
+
+## Automatisk diagnos (2.4.0)
+
+| Varning i Auto-sök | Betyder | Åtgärd |
+|---|---|---|
+| Baud för högt | Bytes splittras, många ramfel, uppskattad baud < inställd | Sänk till uppskattat värde |
+| Baud för lågt | Få långa ”bytes”, 0x00/0xFF-skräp, break | Höj baud |
+| Fel paritet | Paritetsfel i nästan varje byte, CRC-ramar bara utan paritet | Byt E/O/N |
+| Fel stoppbitar | Ramfel vid 2 stopp, ramar OK vid 1 (eller tvärtom) | Justera stoppbitar |
+| A/B omkastade | Linjen vilar lågt: break och skräpskurar i takt med trafiken, inga giltiga ramar | Byt D+/D− |
+| Slav X avviker | En slav har UART-fel eller trasiga svar, de andra är rena | Kontrollera den slavens inställning och kabel |
+
+AI-fliken kan köra samma diagnos som ett verktyg, och kan (om du tillåter det) ändra
+inställningar och skicka testfrågor. Se README.

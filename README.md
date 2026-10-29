@@ -108,3 +108,43 @@ av baud/paritet/stopp. Filer: `modbus_monitor.py` (motor + CLI), `modbus_tab.py`
 - GitHub Actions bygger exe och bifogar den till release vid tagg `v*`.
   Senaste exe: https://github.com/oscarjio/zt-tray/releases/latest/download/zt-tray.exe
 
+### Nytt i 2.4.0 – Auto-sök, Sändare och AI-felsökning
+
+**Auto-sök (fliken Modbus)** – koppla på adaptern och tryck *Auto-sök*. Programmet lyssnar
+på flera hastigheter och paritet/stoppbit-kombinationer, och poängsätter dem efter giltiga
+CRC-ramar. Det visar en *säkerhet i %* och varnar för:
+- **Baud för högt/lågt** (uppskattar den verkliga hastigheten från bitlängden i felbytes)
+- **Fel paritet / stoppbitar** (ramfel kontra paritetsfel)
+- **A/B omkastade** (linjen vilar lågt: break-tillstånd och skräpskurar utan giltiga ramar)
+- **Enskilda slavar som avviker** (t.ex. en slav med fel paritet eller fel baud)
+
+*Använd bästa* ställer in monitorn på det som vann. Kolumnen *UART-fel* i slavtabellen visar
+ramfel och paritetsfel per slav.
+
+**Sändare (Modbus Poll-liknande master)** – FC 1, 2, 3, 4, 5, 6, 15 och 16, pollning,
+adresskanning och värdeformat (u16/s16/hex/u32/s32/f32). Sändaren är **AV som standard**
+och måste aktiveras **en gång per programstart**: *Sändning på buss i drift kan störa*.
+Om lyssnaren är igång delas porten (TX syns i monitorn). Annars öppnar sändaren en egen port.
+
+**AI-felsökning** – en chatt som har verktyg mot den fångade trafiken: status, slavstatistik,
+paketsökning, paket runt en tidpunkt, felhändelser, incidenter, registervärden, auto-sök,
+byte av baud/paritet/stoppbit, start/stopp och felfällor.
+- API: OpenAI-kompatibelt. Standard är OpenRouter med en billig DeepSeek-modell, och modellen
+  går att välja. Klistra in nyckeln och tryck *Spara*. Den sparas i den lokala `config.json`
+  (som är gitignorerad), visas maskerad och skrivs aldrig till loggar.
+  Alternativt kan du sätta miljövariabeln `OPENROUTER_API_KEY`.
+- **Automatisk övervakning**: kryssa i, eller skriv t.ex. *"Vi har ett fel på modbus, det
+  kommer 3 ggr per halvtimme, sätt igång automatisk övervakning."* Programmet för då en
+  långtidsjournal med alla felhändelser, minutstatistik och incidentkluster, med en
+  sammanfattning var 10:e minut. Journalen sparas också som `modbus-loggar/ai-journal_*.jsonl`.
+- När det strular skriver du **"nu strular det"**. Tidpunkten markeras och AI:n söker själv
+  igenom trafiken runt markeringen och incidenterna.
+- **Sändning från AI** kräver att du kryssar i *Tillåt AI att sända* och att Sändaren är
+  aktiverad. Varje sändning bekräftas dessutom i en dialogruta.
+- Förbrukningen av tokens och kostnaden visas under chatten. En typisk analys kostar
+  ungefär $0.002–0.003.
+- Cursor SDK utvärderades. Den kör kodagenter (beta och kräver en Cursor-nyckel), inte
+  chatt mot trafikdata, så programmet använder i stället ett vanligt OpenAI-kompatibelt API.
+
+**Begränsningar:** USB-RS485-adaptrar ger inte exakt bittiming. Baud-uppskattningen och
+A/B-detekteringen är därför heuristiska och ska ses som indikationer med säkerhetsvärde.

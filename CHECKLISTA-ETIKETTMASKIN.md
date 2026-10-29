@@ -1,4 +1,4 @@
-﻿# CHECKLISTA – Modbus RTU-felsökning, etikettmaskin
+# CHECKLISTA – Modbus RTU-felsökning, etikettmaskin
 Skriv ut. Bocka av. Detaljer: MODBUS-FELSOKNING.md.
 
 ## Utrustning
@@ -84,3 +84,18 @@ Skriv ut. Bocka av. Detaljer: MODBUS-FELSOKNING.md.
       KROCK (lila) = två sändare samtidigt → dubbla adresser eller felaktig terminering/bias.
 - [ ] **Spara logg…** när felet uppträtt (sista 120 s) – kan spelas upp igen med **Öppna logg…**.
 - [ ] Seriemonitor-fliken finns för rå trafik (text/hex). Sändning är AV – slå inte på den medan PLC:n är master.
+
+## Uppdatering 2.4.0 – automatik och AI
+
+1. Koppla på adaptern och starta inte lyssningen. Tryck **Auto-sök** på fliken Modbus.
+   - Säkerhet ≥ 80 %: tryck *Använd bästa*.
+   - Varning **"A och B omkastade"**: byt D+/D− och kör Auto-sök igen.
+   - Varning **"baud för högt/lågt"** eller **"paritet/stoppbit"**: kontrollera inställningen
+     i drivarna och i PLC.
+   - Varning **"Slav X avviker"**: kontrollera just den drivarens parametrar.
+2. Starta lyssning. Gå till **AI-felsökning** och skriv vad felet är och hur ofta det kommer,
+   och be om automatisk övervakning.
+3. Låt den gå. Skriv **"nu strular det"** direkt när felet syns på maskinen.
+4. **Sändaren** och **Tillåt AI att sända** ska vara AV i produktion, om du inte uttryckligen
+   vill testa en slav. Varje sändning bekräftas.
+5. Spara journalen (`modbus-loggar/ai-journal_*.jsonl`) och .zmlog-filen till rapporten.

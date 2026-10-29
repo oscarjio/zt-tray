@@ -403,6 +403,8 @@ def cause_text(r):
     other = (r.get("\u00f6vrigt") or 0) - (r.get("feladr") or 0)
     if other > 0:
         parts.append(f"dubbelsvar/skr\u00e4p {other}")
+    if r.get("linjefel"):
+        parts.append(f"UART-fel {r['linjefel']} (paritet/stoppbit/baud?)")
     return ", ".join(parts) if parts else "OK"
 
 
@@ -486,6 +488,7 @@ class SlaveStats:
         self.addr = addr
         self.req = self.resp = self.timeouts = self.crc = self.exc = self.other = 0
         self.late = self.coll = self.wrong = 0
+        self.line_err = self.bad_resp = 0
         self.exc_codes = {}
         self.max_any = None
         self.rtts = collections.deque(maxlen=5000)
@@ -513,7 +516,8 @@ class SlaveStats:
                 "senaste_fel_t": self.last_err_t, "sena": self.late, "krockar": self.coll, "feladr": self.wrong,
                 "missade": self.timeouts, "missade_pct": (100.0 * self.timeouts / self.req) if self.req else 0.0,
                 "max_alla": None if self.max_any is None else self.max_any * 1000,
-                "exc_koder": dict(self.exc_codes), "senaste_ok_t": self.last_ok_t}
+                "exc_koder": dict(self.exc_codes), "senaste_ok_t": self.last_ok_t,
+                "linjefel": self.line_err, "trasiga_svar": self.bad_resp}
 
 
 # ------------------------------------------------------------------ själva analysen
@@ -728,6 +732,8 @@ class Monitor:
         self.t_first = None
         self.trap = None
         self.regmap = RegisterMap()
+        self.line_errs = collections.deque(maxlen=5000)   # (t, typ) UART ram-/paritetsfel
+        self.line_err_total = {"frame": 0, "parity": 0, "overrun": 0, "break": 0}
 
     def set_line(self, baud, parity, stop):
         self.baud, self.parity, self.stop = int(baud), parity, stop
@@ -762,6 +768,25 @@ class Monitor:
             self.seg += data
             self.last_byte_t = max(t, first_t + (len(data) - 1) * self.ct)
             self._tick_locked(t, from_feed=True)
+
+    def line_error(self, t, kind, n=1):
+        """UART-fel (ramfel/paritet/overrun) rapporterat av porten vid tid t."""
+        with self.lock:
+            self.line_err_total[kind] = self.line_err_total.get(kind, 0) + n
+            for _ in range(min(n, 50)):
+                self.line_errs.append((t, kind))
+
+    def _line_errs_in(self, ts, te):
+        if not self.line_errs:
+            return 0
+        lo, hi = ts - 2 * self.ct - 0.002, te + 0.02
+        n = 0
+        for t, _k in reversed(self.line_errs):
+            if t < lo:
+                break
+            if t <= hi:
+                n += 1
+        return n
 
     def tick(self, now):
         with self.lock:
@@ -901,6 +926,7 @@ class Monitor:
             st.rtts.append(rtt)
             st.max_any = rtt if st.max_any is None else max(st.max_any, rtt)
             st.last_ok_t = te
+            st.line_err += self._line_errs_in(ts, te)
             self.last_done = (a, p[1], te)
             if fc & 0x80:
                 st.exc += 1
@@ -953,6 +979,12 @@ class Monitor:
     def _garbage(self, g, ts, te, whole):
         p = self.pending
         self.bad_frames += 1
+        _who = p[0] if p else (g[0] if whole and len(g) >= 4 and 1 <= g[0] <= 247 else None)
+        if _who is not None:
+            ne = self._line_errs_in(ts, te)
+            st0 = self._st(_who)
+            st0.line_err += ne
+            st0.bad_resp += 1
         self._ctx_req = p[3] if p else None
         lt = self.last_lost
         recent = lt is not None and ts - lt[2] < 3 * self.resp_timeout + 0.1
@@ -1130,7 +1162,7 @@ def export_csv(events, path, t0=0.0):
 # ------------------------------------------------------------------ portar (bara läsning)
 
 class WinPort:
-    """Lokal COM-port via Win32 (ingen pyserial). Skriver aldrig."""
+    """Lokal COM-port via Win32 (ingen pyserial). Skriver bara via write() (Sändare-fliken, aktiverad)."""
 
     def __init__(self, port, baud, parity, stop):
         import ctypes
@@ -1151,7 +1183,7 @@ class WinPort:
         k.ClearCommError.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p]
         self._ct = ctypes
         self._wt = wintypes
-        self.errs = {"frame": 0, "parity": 0, "overrun": 0}
+        self.errs = {"frame": 0, "parity": 0, "overrun": 0, "break": 0}
 
     def read(self):
         d = self.ws.read(4096)
@@ -1169,10 +1201,15 @@ class WinPort:
                 self.errs["parity"] += 1
             if v & 0x3:
                 self.errs["overrun"] += 1
+            if v & 0x10:
+                self.errs["break"] += 1
 
     def errors(self):
         self._poll_errors()
         return dict(self.errs)
+
+    def write(self, b):
+        self.ws.write(b)
 
     def close(self):
         self.ws.close()
@@ -1189,6 +1226,9 @@ class PySerialPort:
 
     def errors(self):
         return {}
+
+    def write(self, b):
+        self.s.write(b)
 
     def close(self):
         self.s.close()
@@ -1371,6 +1411,13 @@ class Capture:
         self.port = None
         self.th = None
         self.error = ""
+        self.taps = []          # callbacks(data) - t.ex. master som delar porten
+
+    def write(self, b):
+        """Sänd via lyssnarens port (bara från Sändare/AI när sändning är aktiverad)."""
+        if not hasattr(self.port, "write"):
+            raise OSError("porten kan inte sända (fjärrport/uppspelning)")
+        self.port.write(b)
 
     def start(self):
         self.port = open_port(self.port_name, *self.cfg)
@@ -1379,14 +1426,30 @@ class Capture:
 
     def _run(self):
         pc = time.perf_counter
+        last = {}
         try:
             while not self.stop_ev.is_set():
                 d = self.port.read()
                 t = pc()
+                try:
+                    cur = self.port.errors() if d else None
+                except Exception:
+                    cur = None
+                if cur:
+                    for k, v in cur.items():
+                        dv = v - last.get(k, 0)
+                        if dv > 0 and last:
+                            self.mon.line_error(t, k, dv)
+                    last = dict(cur)
                 if d:
                     if self.log:
                         self.log.write(t, d)
                     self.mon.feed(t, d)
+                    for tap in list(self.taps):
+                        try:
+                            tap(d)
+                        except Exception:
+                            pass
                 else:
                     self.mon.tick(t)
         except Exception as e:  # kabel ut, port borta
@@ -1501,7 +1564,7 @@ def _resp_for(req, regs_seed=0):
 
 
 def simulate(duration=10.0, baud=19200, parity="E", stop=1, slaves=(1, 2, 3, 4, 5, 6),
-             faults=None, usb_latency=0.001, seed=1, poll_gap=0.005, resp_delay=0.003):
+             faults=None, usb_latency=0.001, seed=1, poll_gap=0.005, resp_delay=0.003, return_bytes=False):
     """
     Bygger en syntetisk inspelning [(t, bytes)] som en USB-adapter skulle leverera.
     faults: dict {"timeout": {slav: sannolikhet}, "crc": {...}, "exception": {...},
@@ -1515,9 +1578,9 @@ def simulate(duration=10.0, baud=19200, parity="E", stop=1, slaves=(1, 2, 3, 4, 
     byte_times = []   # (t, byte)
     t = 0.01
 
-    def put(frame, t0):
+    def put(frame, t0, tag=None):
         for k, b in enumerate(frame):
-            byte_times.append((t0 + (k + 1) * ct, b))
+            byte_times.append((t0 + (k + 1) * ct, b, tag))
         return t0 + len(frame) * ct
 
     def p(kind, s):
@@ -1572,26 +1635,34 @@ def simulate(duration=10.0, baud=19200, parity="E", stop=1, slaves=(1, 2, 3, 4, 
                 resp[len(resp) // 2] ^= 0x10
                 resp = bytes(resp)
             if p("late", s):
-                t = put(resp, t + 0.6 + delay) + poll_gap
+                t = put(resp, t + 0.6 + delay, s) + poll_gap
                 continue
             if p("collide", s):
-                put(resp, t + 0.6 + delay)
+                put(resp, t + 0.6 + delay, s)
                 t += 0.6 + delay + 0.001
                 continue
-            t = put(resp, t + delay)
+            t = put(resp, t + delay, s)
             if p("dup", s):
-                t = put(_resp_for(req, cycle + 7), t + 0.002)
+                t = put(_resp_for(req, cycle + 7), t + 0.002, s)
             t += poll_gap
         if rnd.random() < faults.get("noise", 0):
-            t = put(bytes(rnd.randrange(256) for _ in range(3)), t)
+            t = put(bytes(rnd.randrange(256) for _ in range(3)), t, "noise")
             t += poll_gap
         cycle += 1
 
     # USB-adaptern levererar i block var usb_latency
     byte_times.sort(key=lambda x: x[0])
+    if return_bytes:
+        return byte_times
+    return chunk_bytes(byte_times, usb_latency)
+
+
+def chunk_bytes(byte_times, usb_latency=0.001):
+    """[(t, byte, ...)] -> [(t, bytes)] så som en USB-adapter levererar block."""
     chunks = []
     cur, cur_t = bytearray(), None
-    for bt, b in byte_times:
+    for item in byte_times:
+        bt, b = item[0], item[1]
         slot = (int(bt / usb_latency) + 1) * usb_latency
         if cur_t is not None and slot != cur_t:
             chunks.append((cur_t, bytes(cur)))

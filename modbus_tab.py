@@ -13,6 +13,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 import config as C
+import linecheck as L
 import modbus_monitor as M
 import packet_view
 
@@ -162,10 +163,10 @@ class ModbusTab:
         # --- sammanfattning per adress
         self.lbl_info = ttk.Label(f, text="Stoppad", style="Sub.TLabel")
         self.lbl_info.pack(anchor="w", pady=(4, 2))
-        cols = ("slav", "namn", "fragor", "svar", "miss", "missp", "sena", "krock", "max", "orsak")
-        heads = ("Adress", "Namn", "Frågor", "Svar", "Missade", "Miss %", "Sena", "Krockar", "Max ms",
+        cols = ("slav", "namn", "fragor", "svar", "miss", "missp", "sena", "krock", "uart", "max", "orsak")
+        heads = ("Adress", "Namn", "Frågor", "Svar", "Missade", "Miss %", "Sena", "Krockar", "UART-fel", "Max ms",
                  "Orsak / senaste fel")
-        widths = (55, 120, 60, 60, 60, 55, 45, 55, 60, 420)
+        widths = (55, 120, 60, 60, 60, 55, 45, 55, 60, 60, 420)
         sf = ttk.Frame(f)
         sf.pack(fill="x")
         self.tv_stats = ttk.Treeview(sf, columns=cols, show="headings", height=5)
@@ -393,7 +394,7 @@ class ModbusTab:
 
         def work():
             try:
-                res = M.autodetect(port, 1.5, progress=prog)
+                res = L.live_scan(port, 1.5, progress=prog)
                 err = ""
             except Exception as e:
                 res, err = [], str(e)
@@ -414,7 +415,7 @@ class ModbusTab:
             return
         top = tk.Toplevel(self.f)
         top.title("Auto-sök: poäng per inställning")
-        tv = ttk.Treeview(top, columns=("l", "fr", "bad", "u", "p"), show="headings", height=16)
+        tv = ttk.Treeview(top, columns=("l", "fr", "bad", "u", "p"), show="headings", height=12)
         for c, h in zip(("l", "fr", "bad", "u", "p"), ("Inställning", "Giltiga ramar", "Skräp/CRC", "UART-fel", "Poäng")):
             tv.heading(c, text=h)
             tv.column(c, width=110, anchor="e")
@@ -423,13 +424,13 @@ class ModbusTab:
                                          r["uart_err"], r["score"]))
         tv.pack(fill="both", expand=True, padx=10, pady=10)
         best = res[0]
-        note = M.autodetect_note(best, res)
-        if best["frames"] == 0:
-            msg = "Inga giltiga ramar. Kontrollera A/B (prova att skifta), trafik på bussen och adaptern."
-        else:
-            msg = f"Bäst: {best['baud']} 8{best['parity']}{best['stop']}. {note}"
-        ttk.Label(top, text=msg, wraplength=520).pack(padx=10, anchor="w")
-
+        d = L.diagnose(res, current=self.line(), stats_rows=self.mon.stats_rows() if self.mon else None)
+        msg = L.report_text(d)
+        col = "#2ea043" if d["confidence"] >= 80 else ("#d29922" if d["best"] else "#da3633")
+        tk.Label(top, text=f"Konfidens {d['confidence']} %", fg="white", bg=col,
+                 font=("Segoe UI", 10, "bold"), padx=6).pack(padx=10, anchor="w")
+        ttk.Label(top, text=msg, wraplength=640, justify="left").pack(padx=10, anchor="w")
+        best = d["best"] or best
         def use():
             self.cb_baud.set(str(best["baud"]))
             self.cb_par.set(best["parity"])
@@ -437,10 +438,10 @@ class ModbusTab:
             top.destroy()
         b = ttk.Frame(top)
         b.pack(pady=10)
-        if best["frames"]:
+        if d["best"]:
             ttk.Button(b, text="Använd bästa", style="Accent.TButton", command=use).pack(side="left", padx=4)
         ttk.Button(b, text="Stäng", command=top.destroy).pack(side="left", padx=4)
-        self.lbl_info.config(text=msg)
+        self.lbl_info.config(text=msg.splitlines()[0] if msg else "")
 
     # ------------------------------------------------------------ loggar
     def replay_file(self):
@@ -664,7 +665,8 @@ class ModbusTab:
                 orsak += f"   |  senast: {r['senaste_fel']}"
             iid = self.tv_stats.insert("", "end", values=(
                 r["slav"], names.get(r["slav"], ""), r["frågor"], r["svar"], r["missade"],
-                f"{r['missade_pct']:.1f}", r.get("sena", 0), r.get("krockar", 0), f(r.get("max_alla") or r["max"]),
+                f"{r['missade_pct']:.1f}", r.get("sena", 0), r.get("krockar", 0),
+                r.get("linjefel", 0), f(r.get("max_alla") or r["max"]),
                 orsak), tags=(tag,))
             if str(r["slav"]) in sel:
                 self.tv_stats.selection_add(iid)
