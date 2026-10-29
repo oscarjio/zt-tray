@@ -83,5 +83,28 @@ CRC-fel, exception, fel adress, dubbelsvar, skräp, kort paus och tidig master. 
 (min/medel/max/p99), jämförelse sida vid sida, **registervy** (alla register per slav med värde, historik,
 läs/skriv, fel; jämförelse mellan två slavar; CSV-export), rålogg (.zmlog) + uppspelning, CSV, felfälla och auto-sök
 av baud/paritet/stopp. Filer: `modbus_monitor.py` (motor + CLI), `modbus_tab.py` (UI),
-`test_modbus_monitor.py` (17 tester). Se **MODBUS-FELSOKNING.md** för guide, SW1A4080-fakta och CLI-exempel.
+`packet_view.py`, `serial_tab.py`, `test_modbus_monitor.py` + `test_modbus_extra.py` (26 tester). Se **MODBUS-FELSOKNING.md** för guide, SW1A4080-fakta och CLI-exempel.
+
+### Nytt i 2.3.0
+- **Portväljare**: COM-portar med beskrivning/tillverkare/VID:PID/serienr, ⟳ och hotplug (var 2 s). RS485-adapter
+  (FTDI USB-RS485, Waveshare, Moxa UPort 1150 …) väljs automatiskt, annars första USB-serial; senaste port sparas.
+- **Länkindikator**: Inga bytes / Bytes men inga giltiga ramar (byt A/B, kolla baud/paritet) / Giltiga Modbus-ramar,
+  med byte/s och andel ramar med korrekt CRC.
+- **Kända enheter** (adress=namn, sparas): grön = svarar, gul = sent/missar ibland, röd = frågas men svarar ej,
+  grå = frågas aldrig. Okända adresser som dyker upp visas också.
+- **Sammanfattning per adress**: frågor, svar, missade (%), sena, krockar, max ms, orsak i klartext
+  (timeout / CRC-fel / exception X / svar från annan adress / krock). Missade svar per adress syns alltid.
+- **Vad hände innan stoppet**: vid > 2 s tystnad efter fel eller när PLC:n slutar fråga en adress – senaste 30
+  paketen och vilken adress som felade först.
+- **Halv duplex**: SENT SVAR (efter timeout eller efter nästa fråga) och KROCK (överlappande/trasiga ramar).
+  Timeout ställs i UI; svarstid färgas grön/gul nära gränsen/röd över.
+- **Wireshark-lik paketvy**: nr/tid/delta/frågad/svarande/fc/info/svarstid/status, färgregler, filter
+  (`addr==5`, `fc==3`, `status!=ok`, `timeout`, `sent`, `krock`, `reg==100`, `ms>50`, `&&`, `||`, `!`), fritextsök
+  (hex/text) med nästa/föregående, detaljpanel med fält + hexdump, fråga↔svar markeras. Spara/öppna logg (.zmlog).
+- **4-tråd**: välj en 2:a port – trafiken från två adaptrar (RX- och TX-paret) slås ihop i samma vy.
+- **Simulera**-knapp: 40 s syntetisk buss med inbyggda fel – för att lära sig vyn utan hårdvara.
+- **Seriemonitor-flik**: generell konsol (port/baud/paritet/stopp, text/hex/båda, tidsstämplar, ny rad vid tystnad
+  eller tecken, logg till fil). Sändning är AV som standard och tydligt varningsmärkt.
+- GitHub Actions bygger exe och bifogar den till release vid tagg `v*`.
+  Senaste exe: https://github.com/oscarjio/zt-tray/releases/latest/download/zt-tray.exe
 

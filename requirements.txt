@@ -1,0 +1,5 @@
+pystray==0.19.5
+pillow==13.0.0
+scapy==2.8.0
+pyserial==3.5
+pyinstaller==6.22.3

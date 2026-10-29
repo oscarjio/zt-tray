@@ -228,16 +228,28 @@ def describe(f, is_resp):
 # ------------------------------------------------------------------ händelser och statistik
 
 class Event:
-    __slots__ = ("t", "kind", "level", "slave", "fc", "text", "raw", "rtt")
+    __slots__ = ("t", "kind", "level", "slave", "fc", "text", "raw", "rtt", "asked", "req")
 
-    def __init__(self, t, kind, level, slave, fc, text, raw=b"", rtt=None):
+    def __init__(self, t, kind, level, slave, fc, text, raw=b"", rtt=None, asked=None, req=None):
         self.t, self.kind, self.level, self.slave = t, kind, level, slave
         self.fc, self.text, self.raw, self.rtt = fc, text, bytes(raw), rtt
+        self.asked = slave if asked is None else asked
+        self.req = req
+
+    @property
+    def status(self):
+        return ev_status(self)
+
+    @property
+    def responder(self):
+        return ev_responder(self)
 
     def line(self, t0=0.0):
         s = "-" if self.slave is None else str(self.slave)
         fc = "--" if self.fc is None else f"{self.fc:02X}"
         rtt = f" {self.rtt * 1000:6.1f}ms" if self.rtt is not None else ""
+        if self.asked is not None and self.asked != self.slave:
+            s += f" (fr\u00e5gad {self.asked})"
         return f"{self.t - t0:10.4f} {KIND_TEXT.get(self.kind, self.kind):<10} slav {s:>3} fc {fc}{rtt}  {self.text}  [{self.raw.hex(' ')}]"
 
 
@@ -245,14 +257,237 @@ KIND_TEXT = {
     "req": "FRÅGA", "resp": "SVAR", "exc": "EXCEPTION", "timeout": "TIMEOUT", "crc": "CRC-FEL",
     "junk": "SKRÄP", "wrongaddr": "FEL ADR", "dup": "DUBBELSVAR", "early": "TIDIG",
     "gap": "KORT PAUS", "bcast": "BROADCAST", "info": "INFO",
+    "late": "SENT SVAR", "collision": "KROCK",
 }
-ERROR_KINDS = ("timeout", "crc", "junk", "wrongaddr", "dup", "early", "exc")
+ERROR_KINDS = ("timeout", "crc", "junk", "wrongaddr", "dup", "early", "exc", "late", "collision")
+
+STATUS_OF = {"req": "ok", "resp": "ok", "bcast": "ok", "info": "ok", "timeout": "timeout", "early": "timeout",
+             "late": "late", "collision": "krock", "crc": "crc", "exc": "exc", "wrongaddr": "feladr",
+             "dup": "dubbel", "junk": "skrap", "gap": "gap"}
+STATUS_TEXT = {"ok": "OK", "timeout": "INGET SVAR", "late": "SENT SVAR", "krock": "KROCK", "crc": "CRC-FEL",
+               "exc": "EXCEPTION", "feladr": "FEL ADRESS", "dubbel": "DUBBELSVAR", "skrap": "SKR\u00c4P",
+               "gap": "KORT PAUS"}
+RESPONDER_KINDS = ("resp", "exc", "late", "wrongaddr", "dup", "crc")
+
+
+def ev_status(ev):
+    return STATUS_OF.get(ev.kind, ev.kind)
+
+
+def ev_responder(ev):
+    return ev.slave if ev.kind in RESPONDER_KINDS else None
+
+
+def req_reg(raw):
+    """(startadress, antal) ur en fr\u00e5ga (fc 1-6, 15, 16)."""
+    if raw and len(raw) >= 6 and raw[1] in (1, 2, 3, 4, 5, 6, 15, 16):
+        start = (raw[2] << 8) | raw[3]
+        n = 1 if raw[1] in (5, 6) else (raw[4] << 8) | raw[5]
+        return start, n
+    return None
+
+
+def ev_regs(ev):
+    return req_reg(ev.req if ev.req else (ev.raw if ev.kind in ("req", "bcast") else b""))
+
+
+_STATUS_ALIASES = {"timeout": "timeout", "ingetsvar": "timeout", "late": "late", "sent": "late", "krock": "krock",
+                   "collision": "krock", "crc": "crc", "exc": "exc", "exception": "exc", "feladr": "feladr",
+                   "wrongaddr": "feladr", "ok": "ok", "dubbel": "dubbel", "dup": "dubbel", "skrap": "skrap",
+                   "junk": "skrap", "gap": "gap"}
+_FIELDS = ("addr", "adr", "slav", "slave", "asked", "fragad", "resp", "svarande", "fc", "ms", "rtt",
+           "status", "st", "kind", "reg")
+
+
+def _field(ev, name):
+    if name in ("addr", "adr", "slav", "slave"):
+        return {ev.asked, ev.slave} - {None}
+    if name in ("asked", "fragad"):
+        return {ev.asked}
+    if name in ("resp", "svarande"):
+        return {ev_responder(ev)}
+    if name == "fc":
+        return {ev.fc}
+    if name in ("ms", "rtt"):
+        return {None if ev.rtt is None else ev.rtt * 1000}
+    if name in ("status", "st"):
+        return {ev_status(ev)}
+    if name == "kind":
+        return {ev.kind}
+    if name == "reg":
+        r = ev_regs(ev)
+        return set(range(r[0], r[0] + max(1, min(r[1], 2000)))) if r else {None}
+    raise ValueError(name)
+
+
+def _term(t):
+    import re as _re
+    tl = t.lower()
+    neg = tl.startswith("!") and not tl.startswith("!=")
+    if neg:
+        tl = tl[1:]
+    mo = _re.fullmatch(r"([a-z_]+)(==|!=|>=|<=|>|<|=)(.+)", tl)
+    if not mo:
+        if tl in ("fel", "err", "error"):
+            f = lambda ev: ev_status(ev) != "ok"
+        elif tl in _STATUS_ALIASES:
+            f = lambda ev, s=_STATUS_ALIASES[tl]: ev_status(ev) == s
+        elif _re.fullmatch(r"\d+", tl):
+            f = lambda ev, v=int(tl): v in (ev.asked, ev.slave)
+        else:
+            raise ValueError(f"f\u00f6rst\u00e5r inte '{t}'")
+        return (lambda ev: not f(ev)) if neg else f
+    name, op, val = mo.groups()
+    if name not in _FIELDS:
+        raise ValueError(f"ok\u00e4nt f\u00e4lt '{name}' (anv\u00e4nd addr, asked, resp, fc, reg, status, ms)")
+    op = "==" if op == "=" else op
+    if name in ("status", "st"):
+        v = _STATUS_ALIASES.get(val, val)
+    elif name == "kind":
+        v = val
+    elif val in ("asked", "fragad"):
+        v = "asked"
+    else:
+        try:
+            v = float(val) if "." in val else int(val, 0)
+        except ValueError:
+            raise ValueError(f"ogiltigt v\u00e4rde '{val}'")
+
+    def f(ev, name=name, op=op, v=v):
+        vals = _field(ev, name)
+        vv = ev.asked if v == "asked" else v
+        if op == "==":
+            return vv in vals
+        if op == "!=":
+            return vv not in vals
+        nums = [x for x in vals if isinstance(x, (int, float))]
+        return any((x > vv) if op == ">" else (x < vv) if op == "<" else (x >= vv) if op == ">=" else (x <= vv)
+                   for x in nums)
+    return (lambda ev: not f(ev)) if neg else f
+
+
+def parse_filter(expr):
+    """Enkel filtersyntax (Wireshark-lik): addr==5  fc==3  status!=ok  timeout  reg==100  ms>50  resp!=asked.
+    Mellanslag/&&/and = OCH, ||/or = ELLER, !term = INTE. Ett tal = adress. 'fel' = status!=ok.
+    Returnerar predikat(ev); kastar ValueError vid fel."""
+    import re as _re
+    expr = (expr or "").strip()
+    if not expr:
+        return lambda ev: True
+    groups = []
+    for g in _re.split(r"\|\||\bor\b|\beller\b", expr):
+        g = _re.sub(r"&&|\band\b|\boch\b", " ", g)
+        g = _re.sub(r"\s*(==|!=|>=|<=|>|<|=)\s*", r"\1", g)
+        terms = [_term(t) for t in g.split()]
+        if terms:
+            groups.append(terms)
+    return lambda ev: any(all(t(ev) for t in grp) for grp in groups)
+
+
+def cause_text(r):
+    """Orsak i klartext ur en stats-rad."""
+    parts = []
+    if r.get("timeout"):
+        parts.append(f"timeout/inget svar {r['timeout']}")
+    if r.get("sena"):
+        parts.append(f"sent svar {r['sena']}")
+    if r.get("krockar"):
+        parts.append(f"krock {r['krockar']}")
+    if r.get("crc"):
+        parts.append(f"CRC-fel {r['crc']}")
+    if r.get("exception"):
+        codes = ", ".join(str(k) for k in sorted(r.get("exc_koder") or {}))
+        parts.append(f"exception {codes} ({r['exception']} st)" if codes else f"exception {r['exception']}")
+    if r.get("feladr"):
+        parts.append(f"svar fr\u00e5n annan adress {r['feladr']}")
+    other = (r.get("\u00f6vrigt") or 0) - (r.get("feladr") or 0)
+    if other > 0:
+        parts.append(f"dubbelsvar/skr\u00e4p {other}")
+    return ", ".join(parts) if parts else "OK"
+
+
+def find_stops(events, quiet=2.0, n=30, at_end=False):
+    """'Vad h\u00e4nde innan stoppet': tystnad > quiet s efter fel, eller PLC slutar fr\u00e5ga en adress efter fel.
+    Returnerar [{typ, t, addr, first_fail, before:[Event]}]."""
+    evs = list(events)
+    out = []
+    last_req = {}
+    last_err = {}
+    flagged = set()
+
+    def add(typ, idx, addr=None):
+        win = evs[max(0, idx - n + 1):idx + 1]
+        errs = [e for e in win if e.kind in ERROR_KINDS]
+        if not errs:
+            return
+        ff = errs[0].asked if errs[0].asked is not None else errs[0].slave
+        out.append({"typ": typ, "t": evs[idx].t, "addr": addr, "first_fail": ff, "before": win})
+
+    for i, e in enumerate(evs):
+        if i and e.t - evs[i - 1].t > quiet:
+            add("trafiken upph\u00f6rde", i - 1)
+        for a in list(last_req):
+            if a in last_err and a not in flagged and e.t - last_req[a] > quiet:
+                flagged.add(a)
+                add(f"PLC slutade fr\u00e5ga adress {a}", last_err[a], a)
+        if e.kind == "req":
+            last_req[e.asked] = e.t
+            flagged.discard(e.asked)
+        elif e.kind == "resp":
+            last_err.pop(e.slave, None)
+        elif e.kind in ERROR_KINDS and e.asked is not None:
+            last_err[e.asked] = i
+    if at_end and evs:
+        add("slut p\u00e5 data", len(evs) - 1)
+    return out
+
+
+def device_states(rows, known, now_t=None, quiet=5.0):
+    """Status per k\u00e4nd enhet + ok\u00e4nda: [(addr, namn, f\u00e4rg, text)]. f\u00e4rg: green/yellow/red/grey."""
+    by = {r["slav"]: r for r in rows}
+    out = []
+    for a in sorted(set(known) | set(by)):
+        name = known.get(a, "OK\u00c4ND")
+        r = by.get(a)
+        if not r or not r["fr\u00e5gor"]:
+            out.append((a, name, "grey", "fr\u00e5gas aldrig"))
+            continue
+        recent_ok = r.get("senaste_ok_t") is not None and (now_t is None or now_t - r["senaste_ok_t"] < quiet)
+        if not r["svar"] or not recent_ok:
+            out.append((a, name, "red", f"fr\u00e5gas ({r['fr\u00e5gor']}) men svarar EJ"
+                        + (f" - {cause_text(r)}" if cause_text(r) != "OK" else "")))
+        elif r.get("sena") or r.get("missade") or r.get("krockar"):
+            out.append((a, name, "yellow", f"svarar, men {cause_text(r)}"))
+        else:
+            out.append((a, name, "green", f"svarar ({r['svar']} svar, max {r['max'] or 0:.1f} ms)"))
+    return out
+
+
+def link_state(bytes_per_s, ok_frames, bad_frames):
+    """L\u00e4nkindikator: (f\u00e4rg, text)."""
+    tot = ok_frames + bad_frames
+    pct = 100.0 * ok_frames / tot if tot else 0.0
+    if bytes_per_s <= 0 and tot == 0:
+        return "grey", "Inga bytes - kolla kabel/adapter/COM-port och att bussen \u00e4r aktiv"
+    if ok_frames == 0 or pct < 50:
+        return "red", (f"Bytes men inga giltiga ramar ({bytes_per_s:.0f} B/s, CRC-ok {pct:.0f} %) - "
+                       "prova byt A/B, kolla baud/paritet (Auto-s\u00f6k)")
+    return "green", f"Giltiga Modbus-ramar  {bytes_per_s:.0f} B/s  CRC-ok {pct:.1f} %"
+
+
+DEMO_FAULTS = {"timeout": {5: 0.05}, "crc": {5: 0.03}, "exception": {3: 0.02},
+               "dup": {2: 0.01}, "noise": 0.02, "early": {6: 0.02},
+               "illegal": {5: (300,)}, "regdiff": {5: 3}, "late": {4: 0.03}, "collide": {5: 0.02},
+               "stop": {5: 24.0}}
 
 
 class SlaveStats:
     def __init__(self, addr):
         self.addr = addr
         self.req = self.resp = self.timeouts = self.crc = self.exc = self.other = 0
+        self.late = self.coll = self.wrong = 0
+        self.exc_codes = {}
+        self.max_any = None
         self.rtts = collections.deque(maxlen=5000)
         self.last_err = ""
         self.last_err_t = None
@@ -270,12 +505,15 @@ class SlaveStats:
             p99 = r[min(len(r) - 1, int(len(r) * 0.99))] * 1000
         else:
             mn = mx = avg = p99 = None
-        errs = self.timeouts + self.crc + self.exc + self.other
+        errs = self.timeouts + self.crc + self.exc + self.other + self.late + self.coll
         return {"slav": self.addr, "frågor": self.req, "svar": self.resp, "timeout": self.timeouts,
                 "crc": self.crc, "exception": self.exc, "övrigt": self.other, "fel": errs,
                 "felprocent": (100.0 * errs / self.req) if self.req else 0.0,
                 "min": mn, "medel": avg, "max": mx, "p99": p99, "senaste_fel": self.last_err,
-                "senaste_fel_t": self.last_err_t}
+                "senaste_fel_t": self.last_err_t, "sena": self.late, "krockar": self.coll, "feladr": self.wrong,
+                "missade": self.timeouts, "missade_pct": (100.0 * self.timeouts / self.req) if self.req else 0.0,
+                "max_alla": None if self.max_any is None else self.max_any * 1000,
+                "exc_koder": dict(self.exc_codes), "senaste_ok_t": self.last_ok_t}
 
 
 # ------------------------------------------------------------------ själva analysen
@@ -481,6 +719,10 @@ class Monitor:
         self.pending = None      # (addr, fc, t_end, raw)
         self.last_done = None    # (addr, fc, t_resp_end)
         self.last_frame_end = None
+        self.last_lost = None    # senaste obesvarade fr\u00e5ga (SENT SVAR/KROCK)
+        self._ctx_req = None
+        self.crc_ok_frames = 0
+        self.bad_frames = 0
         self.bytes_total = 0
         self.frames_total = 0
         self.t_first = None
@@ -597,6 +839,10 @@ class Monitor:
         return s
 
     def _emit(self, ev):
+        if ev.kind in ("req", "bcast"):
+            ev.req = ev.raw
+        elif ev.req is None:
+            ev.req = self._ctx_req
         self.events.append(ev)
         self.new_events.append(ev)
         if ev.kind in ERROR_KINDS and ev.slave is not None:
@@ -612,12 +858,15 @@ class Monitor:
     def _timeout(self, p, t, why):
         a, fc, t_end, raw = p
         self._st(a).timeouts += 1
+        self.last_lost = p
+        self._ctx_req = raw
         self.regmap.on_fail(raw, t, "timeout")
         self._emit(Event(t, "timeout", "err", a, fc,
                          f"{describe(raw, False)} → INGET SVAR (timeout, {why})", raw))
 
     def _frame(self, f, ts, te, measured_gap):
         self.frames_total += 1
+        self.crc_ok_frames += 1
         a, fc = f[0], f[1]
         gap = None if self.last_frame_end is None else ts - self.last_frame_end
         p = self.pending
@@ -627,16 +876,36 @@ class Monitor:
             p = None
         resp_shape = is_resp_shape(f)
         req_shape = is_req_shape(f)
+        self._ctx_req = p[3] if p else None
+        lt = self.last_lost
+        if (lt and a == lt[0] and (fc == lt[1] or fc == (lt[1] | 0x80)) and (resp_shape or fc & 0x80)
+                and not (p and a == p[0]) and ts - lt[2] < 10 * self.resp_timeout + 1.0
+                and (not req_shape or bytes(f) == bytes(lt[3]))):
+            self.last_lost = None
+            rtt = max(0.0, ts - lt[2])
+            st = self._st(a)
+            st.late += 1
+            st.max_any = rtt if st.max_any is None else max(st.max_any, rtt)
+            self._ctx_req = lt[3]
+            extra = f" - PLC hade redan fr\u00e5gat slav {p[0]}" if p else ""
+            self._emit(Event(te, "late", "err", a, fc & 0x7F,
+                             f"{describe(lt[3], False)}  SENT SVAR efter {rtt * 1000:.1f} ms "
+                             f"(gr\u00e4ns {self.resp_timeout * 1000:.0f} ms){extra}", f, rtt, asked=lt[0]))
+            self.last_frame_end = te
+            return
         if p and a == p[0] and (fc == p[1] or fc == (p[1] | 0x80)) and (resp_shape or fc & 0x80):
             self.pending = None
             st = self._st(a)
             rtt = max(0.0, ts - p[2])
             st.resp += 1
             st.rtts.append(rtt)
+            st.max_any = rtt if st.max_any is None else max(st.max_any, rtt)
             st.last_ok_t = te
             self.last_done = (a, p[1], te)
             if fc & 0x80:
                 st.exc += 1
+                if len(f) >= 3:
+                    st.exc_codes[f[2]] = st.exc_codes.get(f[2], 0) + 1
                 self.regmap.on_fail(p[3], te, describe(f, True))
                 self._emit(Event(te, "exc", "warn", a, fc & 0x7F,
                                  f"{describe(p[3], False)} → {describe(f, True)} ({rtt * 1000:.1f} ms)", f, rtt))
@@ -648,21 +917,24 @@ class Monitor:
             self.pending = None
             self._st(a).other += 1
             self._st(p[0]).other += 1
-            self._emit(Event(te, "wrongaddr", "err", a, fc,
-                             f"svar från slav {a} men frågan gick till slav {p[0]} (fel adress/adresskrock?)", f))
+            self._st(p[0]).wrong += 1
+            self._emit(Event(te, "wrongaddr", "err", a, fc, asked=p[0], text=
+                             f"svar från slav {a} men frågan gick till slav {p[0]} (fel adress/adresskrock?)", raw=f))
         elif (not p and self.last_done and resp_shape and not req_shape
               and fc in (self.last_done[1], self.last_done[1] | 0x80)
               and ts - self.last_done[2] < self.resp_timeout):
             ld = self.last_done
             self._st(ld[0]).other += 1
             who = "samma adress" if a == ld[0] else f"slav {a}"
-            self._emit(Event(te, "dup", "err", a, fc,
-                             f"extra svar efter att slav {ld[0]} redan svarat ({who}) - två enheter med samma adress?", f))
+            self._ctx_req = None
+            self._emit(Event(te, "dup", "err", a, fc, asked=ld[0], text=
+                             f"extra svar efter att slav {ld[0]} redan svarat ({who}) - två enheter med samma adress?", raw=f))
         else:
             # en fråga
             if p:
                 self.pending = None
                 self._st(p[0]).timeouts += 1
+                self.last_lost = p
                 self.regmap.on_fail(p[3], ts, "inget svar (master frågade vidare)")
                 self._emit(Event(ts, "early", "err", p[0], p[1],
                                  f"master sände ny fråga (till {a}) efter {(ts - p[2]) * 1000:.1f} ms utan svar från {p[0]}",
@@ -680,6 +952,26 @@ class Monitor:
 
     def _garbage(self, g, ts, te, whole):
         p = self.pending
+        self.bad_frames += 1
+        self._ctx_req = p[3] if p else None
+        lt = self.last_lost
+        recent = lt is not None and ts - lt[2] < 3 * self.resp_timeout + 0.1
+        quick = p is not None and ts - p[2] < self.gap
+        if (p and (recent or quick)) or (not p and recent):
+            self.pending = None
+            if not p:
+                p = lt
+            st = self._st(p[0])
+            st.coll += 1
+            self.regmap.on_fail(p[3], te, "krock")
+            why = (f"sent svar fr\u00e5n slav {lt[0]} krockade troligen med fr\u00e5gan" if recent
+                   else "svaret b\u00f6rjade innan fr\u00e5gan var klar")
+            self.last_lost = None
+            self._emit(Event(te, "collision", "err", p[0], p[1],
+                             f"{describe(p[3], False)}  KROCK: {len(g)} trasiga byte - {why} (tv\u00e5 s\u00e4ndare samtidigt)",
+                             g, asked=p[0]))
+            self.last_frame_end = te
+            return
         if whole and len(g) >= 4 and g[0] <= 247 and (g[1] & 0x7F) in FC_NAMES:
             a = g[0]
             if p and a == p[0]:
@@ -950,6 +1242,122 @@ def list_ports():
         return []
 
 
+RS485_HINTS = ("rs485", "rs-485", "485", "waveshare", "uport 1150", "uport1150", "moxa")
+
+
+def port_infos():
+    """Portlista med beskrivning/tillverkare/VID:PID/serienr (pyserial), annars bara namn."""
+    out = []
+    try:
+        from serial.tools import list_ports as _lp
+        for p in sorted(_lp.comports(), key=lambda x: x.device):
+            txt = " ".join(str(v or "") for v in (p.description, p.product, p.manufacturer)).lower()
+            out.append({"device": p.device, "description": p.description or "", "manufacturer": p.manufacturer or "",
+                        "product": p.product or "", "vid": p.vid, "pid": p.pid, "serial": p.serial_number or "",
+                        "usb": p.vid is not None, "rs485": any(h in txt for h in RS485_HINTS)})
+    except Exception:
+        pass
+    if not out:
+        out = [{"device": d, "description": "", "manufacturer": "", "product": "", "vid": None, "pid": None,
+                "serial": "", "usb": False, "rs485": False} for d in list_ports()]
+    return out
+
+
+def port_label(i):
+    s = i["device"]
+    if i.get("description") and i["description"] != i["device"]:
+        s += f" \u2013 {i['description']}"
+    if i.get("manufacturer"):
+        s += f" [{i['manufacturer']}]"
+    if i.get("vid") is not None:
+        s += f" {i['vid']:04X}:{(i.get('pid') or 0):04X}"
+    if i.get("serial"):
+        s += f" SN {i['serial']}"
+    if i.get("rs485"):
+        s += "  \u2605RS485"
+    return s
+
+
+def port_name(label):
+    """'COM5 - USB Serial ...' -> 'COM5'."""
+    label = (label or "").strip()
+    return label.split()[0] if label else ""
+
+
+def pick_port(infos, last=""):
+    """Senast vald om den finns, annars RS485-adapter, annars första USB-serial, annars första."""
+    if not infos:
+        return None
+    for i in infos:
+        if last and i["device"].upper() == last.upper():
+            return i
+    for i in infos:
+        if i["rs485"]:
+            return i
+    for i in infos:
+        if i["usb"]:
+            return i
+    return infos[0]
+
+
+class MultiCapture:
+    """Lyssna på flera portar samtidigt (4-trådsbuss: ett par för master->slav, ett för slav->master)
+    och slå ihop trafiken i samma Monitor. Sänder aldrig."""
+
+    def __init__(self, mon, port_names, baud, parity, stop, log_path=None, on_error=None):
+        self.caps = []
+        self.mon = mon
+        self.port_name = " + ".join(port_names)
+        for i, pn in enumerate(port_names):
+            lp = None
+            if log_path:
+                root, ext = os.path.splitext(log_path)
+                lp = log_path if i == 0 else f"{root}_{pn}{ext}"
+            self.caps.append(Capture(mon, pn, baud, parity, stop, log_path=lp, on_error=on_error))
+        self.port = self.caps[0].port if self.caps else None
+        self.error = ""
+
+    def start(self):
+        started = []
+        try:
+            for c in self.caps:
+                c.start()
+                started.append(c)
+        except Exception:
+            for c in started:
+                c.stop()
+            raise
+        self.port = self.caps[0].port
+
+    @property
+    def th(self):
+        class _T:
+            def __init__(s, caps):
+                s.caps = caps
+
+            def is_alive(s):
+                return all(c.th and c.th.is_alive() for c in s.caps)
+        return _T(self.caps)
+
+    def errors(self):
+        out = {}
+        for c in self.caps:
+            try:
+                for k, v in (c.port.errors() if c.port else {}).items():
+                    out[k] = out.get(k, 0) + v
+            except Exception:
+                pass
+        return out
+
+    def stop(self):
+        for c in self.caps:
+            try:
+                c.stop()
+            except Exception:
+                pass
+        self.error = "; ".join(c.error for c in self.caps if c.error)
+
+
 class Capture:
     """Lästråd: port -> Monitor (+ ev. rålogg)."""
 
@@ -1117,8 +1525,12 @@ def simulate(duration=10.0, baud=19200, parity="E", stop=1, slaves=(1, 2, 3, 4, 
         return rnd.random() < (v.get(s, 0) if isinstance(v, dict) else v)
 
     cycle = 0
+    stopped = {}
     while t < duration:
         for s in slaves:
+            if stopped.get(s):
+                continue
+            stop_at = faults.get("stop", {}).get(s)
             fc = 3 if (cycle + s) % 3 else (6 if s % 2 else 0x10)
             extra_addr = None
             if fc == 3 and cycle % 5 == 0:
@@ -1133,6 +1545,10 @@ def simulate(duration=10.0, baud=19200, parity="E", stop=1, slaves=(1, 2, 3, 4, 
             t = put(req, t)
             if p("early", s):
                 t += 0.002   # master väntar för kort och sänder nästa
+                continue
+            if stop_at is not None and t > stop_at:
+                stopped[s] = True      # slutar svara, PLC ger upp adressen
+                t += 0.6
                 continue
             if p("timeout", s):
                 t += 0.1
@@ -1155,6 +1571,13 @@ def simulate(duration=10.0, baud=19200, parity="E", stop=1, slaves=(1, 2, 3, 4, 
                 resp = bytearray(resp)
                 resp[len(resp) // 2] ^= 0x10
                 resp = bytes(resp)
+            if p("late", s):
+                t = put(resp, t + 0.6 + delay) + poll_gap
+                continue
+            if p("collide", s):
+                put(resp, t + 0.6 + delay)
+                t += 0.6 + delay + 0.001
+                continue
             t = put(resp, t + delay)
             if p("dup", s):
                 t = put(_resp_for(req, cycle + 7), t + 0.002)
@@ -1165,6 +1588,7 @@ def simulate(duration=10.0, baud=19200, parity="E", stop=1, slaves=(1, 2, 3, 4, 
         cycle += 1
 
     # USB-adaptern levererar i block var usb_latency
+    byte_times.sort(key=lambda x: x[0])
     chunks = []
     cur, cur_t = bytearray(), None
     for bt, b in byte_times:
@@ -1193,12 +1617,12 @@ def _fmt(v):
 
 
 def stats_table(rows):
-    head = f"{'slav':>4} {'frågor':>7} {'svar':>7} {'timeout':>7} {'crc':>5} {'exc':>5} {'övr':>5} {'fel%':>6} {'min':>7} {'medel':>7} {'max':>7} {'p99':>7}  senaste fel"
+    head = f"{'slav':>4} {'frågor':>7} {'svar':>7} {'timeout':>7} {'crc':>5} {'exc':>5} {'övr':>5} {'fel%':>6} {'min':>7} {'medel':>7} {'max':>7} {'p99':>7} {'sena':>5} {'krock':>5}  orsak"
     out = [head, "-" * len(head)]
     for r in rows:
         out.append(f"{r['slav']:>4} {r['frågor']:>7} {r['svar']:>7} {r['timeout']:>7} {r['crc']:>5} {r['exception']:>5} "
                    f"{r['övrigt']:>5} {r['felprocent']:>6.2f} {_fmt(r['min']):>7} {_fmt(r['medel']):>7} {_fmt(r['max']):>7} "
-                   f"{_fmt(r['p99']):>7}  {r['senaste_fel'][:60]}")
+                   f"{_fmt(r['p99']):>7} {r['sena']:>5} {r['krockar']:>5}  {cause_text(r)[:80]}")
     return "\n".join(out)
 
 
@@ -1237,6 +1661,11 @@ def _print_ev(ev, args, t0):
 
 
 def main(argv=None):
+    for _s in (sys.stdout, sys.stderr):
+        try:
+            _s.reconfigure(errors="replace")
+        except Exception:
+            pass
     ap = argparse.ArgumentParser(description="Passiv Modbus RTU-busmonitor (sänder aldrig).")
     ap.add_argument("--port", help="COM5, /dev/ttyUSB0 eller rfc2217://ip:47922")
     ap.add_argument("--baud", type=int, default=19200)
@@ -1270,12 +1699,17 @@ def main(argv=None):
         os.system("")  # slå på ANSI i konsolen
 
     if args.list:
-        print("\n".join(list_ports()) or "inga COM-portar")
+        print("\n".join(port_label(i) for i in port_infos()) or "inga COM-portar")
         return 0
 
     def finish(mon, t0):
         rows = mon.stats_rows()
         print("\n" + stats_table(rows))
+        for stp in find_stops(mon.events, quiet=2.0, n=15):
+            print(f"\n=== VAD H\u00c4NDE INNAN STOPPET: {stp['typ']} vid {stp['t'] - t0:.3f} s - "
+                  f"f\u00f6rst felande adress: {stp['first_fail']} ===")
+            for e in stp["before"]:
+                print("  " + e.line(t0))
         if args.compare:
             print("\n" + compare_table(rows, args.compare))
         if args.regs:
@@ -1306,10 +1740,7 @@ def main(argv=None):
             stop = int(float(st.get("stop", stop)))
         else:
             baud, par = args.baud, args.parity
-            chunks = simulate(30, baud, par, stop, faults={
-                "timeout": {5: 0.05}, "crc": {5: 0.03}, "exception": {3: 0.02},
-                "dup": {2: 0.01}, "noise": 0.02, "early": {6: 0.02},
-                "illegal": {5: (300,)}, "regdiff": {5: 3}})
+            chunks = simulate(30, baud, par, stop, faults=DEMO_FAULTS)
             if args.log:
                 write_log(args.log, chunks, make_header("SIM", baud, par, stop))
         mon = Monitor(baud, par, stop, resp_timeout=args.timeout / 1000, gap=gap,

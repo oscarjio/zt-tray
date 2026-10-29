@@ -238,7 +238,7 @@ class ManualIpDialog:
 # ================================================================ huvudfönster
 
 class MainWindow:
-    TABS = ("quick", "discover", "presets", "zt", "uttag", "modbus", "settings")
+    TABS = ("quick", "discover", "presets", "zt", "uttag", "modbus", "serial", "settings")
 
     def __init__(self, ui):
         self.ui = ui
@@ -272,6 +272,7 @@ class MainWindow:
             ("zt", "ZeroTier", self._build_zt),
             ("uttag", "Uttag", self._build_uttag),
             ("modbus", "Modbus", self._build_modbus),
+            ("serial", "Seriemonitor", self._build_serial),
             ("settings", "Inställningar", self._build_settings),
         ):
             f = ttk.Frame(self.nb, padding=14)
@@ -302,6 +303,11 @@ class MainWindow:
         try:
             if getattr(self, "modbus", None):
                 self.modbus.stop()
+        except Exception:
+            pass
+        try:
+            if getattr(self, "serial", None):
+                self.serial.shutdown()
         except Exception:
             pass
         self.win.destroy()
@@ -1219,6 +1225,14 @@ class MainWindow:
         except Exception as e:
             C.log(f"Modbus-fliken kunde inte byggas: {e!r}")
             ttk.Label(f, text=f"Modbus-monitorn kunde inte startas: {e}").pack(anchor="w")
+
+    def _build_serial(self, f):
+        try:
+            import serial_tab
+            self.serial = serial_tab.SerialTab(f, self)
+        except Exception as e:
+            C.log(f"Seriemonitor-fliken kunde inte byggas: {e!r}")
+            ttk.Label(f, text=f"Seriemonitorn kunde inte startas: {e}").pack(anchor="w")
 
     def _build_settings(self, f):
         app = self.app
