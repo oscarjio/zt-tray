@@ -1295,7 +1295,7 @@ def list_ports():
 RS485_HINTS = ("rs485", "rs-485", "485", "waveshare", "uport 1150", "uport1150", "moxa")
 
 
-def port_infos():
+def _port_infos_raw():
     """Portlista med beskrivning/tillverkare/VID:PID/serienr (pyserial), annars bara namn."""
     out = []
     try:
@@ -1311,6 +1311,120 @@ def port_infos():
         out = [{"device": d, "description": "", "manufacturer": "", "product": "", "vid": None, "pid": None,
                 "serial": "", "usb": False, "rs485": False} for d in list_ports()]
     return out
+
+
+class _PortCache:
+    """Portuppräkning (SetupAPI/pyserial kan ta sekunder eller hänga på vissa drivrutiner/Bluetooth-portar)
+    körs ALDRIG i GUI-tråden: en bakgrundstråd uppdaterar listan, GUI läser cachen direkt."""
+
+    def __init__(self, interval=2.0):
+        self.interval = interval
+        self.infos = None
+        self.lock = threading.Lock()
+        self.ev = threading.Event()
+        self.kick = threading.Event()
+        self.th = None
+        self.last_ok = 0.0
+        self.error = ""
+
+    def _ensure(self):
+        with self.lock:
+            if self.th is None or not self.th.is_alive():
+                self.th = threading.Thread(target=self._loop, daemon=True, name="port-enum")
+                self.th.start()
+
+    def _loop(self):
+        while True:
+            try:
+                r = _port_infos_raw()
+                self.error = ""
+            except Exception as e:
+                r = self.infos or []
+                self.error = repr(e)
+            self.infos = r
+            self.last_ok = time.time()
+            self.ev.set()
+            self.kick.wait(self.interval)
+            self.kick.clear()
+
+    def get(self, wait=0.0):
+        self._ensure()
+        if self.infos is None and wait > 0 and not getattr(self, "_waited", False):
+            self._waited = True   # vänta bara en gång - hänger uppräkningen får GUI:t aldrig vänta igen
+            self.ev.wait(wait)
+        return list(self.infos or [])
+
+    def refresh(self):
+        self._ensure()
+        self.kick.set()
+
+
+PORTS = _PortCache()
+
+
+def port_infos(wait=0.25):
+    """Icke-blockerande: senaste kända portlista (väntar max `wait` s första gången)."""
+    return PORTS.get(wait)
+
+
+OPEN_TIMEOUT_S = 4.0
+
+
+def explain_open_error(port, e):
+    """Begriplig text för varför en COM-port inte gick att öppna (inkl. originalfelet)."""
+    code = getattr(e, "winerror", None) or (e.args[0] if getattr(e, "args", None) and isinstance(e.args[0], int) else None)
+    msg = str(e)
+    low = msg.lower()
+    if isinstance(e, TimeoutError) or "hänger" in low:
+        why = (f"{port} svarar inte (öppningen hänger). Drivrutinen/adaptern har hängt sig: dra ur och sätt i "
+               "USB-adaptern, eller välj en annan port (Bluetooth-COM-portar hänger ofta).")
+    elif code == 5 or "access is denied" in low or "åtkomst nekad" in low or "permissionerror" in low:
+        why = (f"{port} är UPPTAGEN (åtkomst nekad). Ett annat program har porten öppen: en annan/äldre "
+               "ZT-Tray, Seriemonitor-fliken, PuTTY, leverantörens verktyg. Stäng det (eller dra ur/sätt i adaptern).")
+    elif code == 2 or "cannot find" in low or "could not find" in low or "filenotfound" in low or "hittar inte" in low:
+        why = f"{port} FINNS INTE. Adaptern är urdragen eller har fått ett annat COM-nummer: tryck ⟳ och välj om."
+    elif code in (31, 121, 1167, 22) or "semaphore" in low:
+        why = f"{port}: drivrutinen/enheten svarar inte (fel {code}). Dra ur och sätt i adaptern."
+    else:
+        why = f"Kan inte öppna {port}."
+    return f"{why}\n(Tekniskt fel: {type(e).__name__}: {msg})"
+
+
+def open_with_timeout(fn, timeout=None, what="porten", on_late=None):
+    """Kör en blockerande öppning i en egen tråd. Hänger den -> TimeoutError efter `timeout` s.
+    Blir den klar för sent stängs den automatiskt (via on_late)."""
+    timeout = OPEN_TIMEOUT_S if timeout is None else timeout
+    box = {}
+    done = threading.Event()
+    state = {"abandoned": False}
+    lk = threading.Lock()
+
+    def run():
+        try:
+            box["v"] = fn()
+        except BaseException as e:
+            box["e"] = e
+        with lk:
+            late = state["abandoned"]
+            done.set()
+        if late and "v" in box:
+            try:
+                (on_late or (lambda o: o.close()))(box["v"])
+            except Exception:
+                pass
+    threading.Thread(target=run, daemon=True, name="port-open").start()
+    done.wait(timeout)
+    with lk:
+        if not done.is_set():
+            state["abandoned"] = True
+            raise TimeoutError(f"öppning av {what} hänger (> {timeout:.0f} s)")
+    if "e" in box:
+        raise box["e"]
+    return box["v"]
+
+
+def open_port_safe(name, baud, parity, stop, timeout=None):
+    return open_with_timeout(lambda: open_port(name, baud, parity, stop), timeout, what=name)
 
 
 def port_label(i):
@@ -1367,11 +1481,11 @@ class MultiCapture:
         self.port = self.caps[0].port if self.caps else None
         self.error = ""
 
-    def start(self):
+    def start(self, timeout=None):
         started = []
         try:
             for c in self.caps:
-                c.start()
+                c.start(timeout)
                 started.append(c)
         except Exception:
             for c in started:
@@ -1429,8 +1543,8 @@ class Capture:
             raise OSError("porten kan inte sända (fjärrport/uppspelning)")
         self.port.write(b)
 
-    def start(self):
-        self.port = open_port(self.port_name, *self.cfg)
+    def start(self, timeout=None):
+        self.port = open_port_safe(self.port_name, *self.cfg, timeout=timeout)
         self.th = threading.Thread(target=self._run, daemon=True, name="modbus-mon")
         self.th.start()
 
@@ -1803,7 +1917,7 @@ def main(argv=None):
         os.system("")  # slå på ANSI i konsolen
 
     if args.list:
-        print("\n".join(port_label(i) for i in port_infos()) or "inga COM-portar")
+        print("\n".join(port_label(i) for i in _port_infos_raw()) or "inga COM-portar")
         return 0
 
     def finish(mon, t0):

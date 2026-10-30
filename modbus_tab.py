@@ -260,6 +260,8 @@ class ModbusTab:
         return [int(x) for x in self.ent_trap.get().replace(";", ",").split(",") if x.strip().isdigit()]
 
     def refresh_ports(self, force=False, prefer=None, prefer2=None):
+        if force:
+            M.PORTS.refresh()
         infos = M.port_infos()
         devs = [i["device"] for i in infos]
         if not force and devs == self._ports_seen:
@@ -358,7 +360,7 @@ class ModbusTab:
         try:
             cap.start()
         except Exception as e:
-            messagebox.showerror("Modbus", f"Kan inte öppna {' + '.join(ports)}:\n{e}\n\n"
+            messagebox.showerror("Modbus", "\n\n".join(M.explain_open_error(pn, e) for pn in ports[:1]) + "\n\n" + f"Kan inte öppna {' + '.join(ports)}:\n{e}\n\n"
                                  "Upptagen av annat program (t.ex. Seriemonitor-fliken)?", parent=self.f)
             return
         self._begin(mon, cap, time.perf_counter())
@@ -699,9 +701,12 @@ class ModbusTab:
             pass
         cap = (M.MultiCapture(mon, ports, baud, par, stop, log_path=log_path) if len(ports) > 1
                else M.Capture(mon, ports[0], baud, par, stop, log_path=log_path))
+        if not set(ports) <= {i['device'] for i in M.port_infos()}:
+            return   # adaptern inte tillbaka än - försök inte öppna (kan hänga)
         try:
-            cap.start()
-        except Exception:
+            cap.start(timeout=1.5)
+        except Exception as e:
+            lost['why'] = M.explain_open_error(ports[0], e)
             return
         self.cap = cap
         self._lost = None

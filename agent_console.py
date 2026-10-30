@@ -106,8 +106,9 @@ class AgentConsole:
         def say(s, end="\n"):
             self.write("ok" if not s.startswith(("Söker", "Kollar")) else None, s + end)
         try:
-            M.open_port(port, 19200, "E", 1).close()
+            M.open_port_safe(port, 19200, "E", 1).close()
         except Exception as e:
+            self.write("err", M.explain_open_error(port, e) + "\n")
             self.write("err", f"Kan inte öppna {port}: {e}\nPorten är upptagen eller borta – stäng andra program som "
                               "använder den (Seriemonitor-fliken, PuTTY, en annan ZT-Tray, leverantörens verktyg) "
                               "eller dra ur/sätt i adaptern. Tryck sedan START igen.\n")

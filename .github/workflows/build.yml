@@ -1,4 +1,4 @@
-name: build-exe
+﻿name: build-exe
 
 on:
   push:
@@ -23,6 +23,7 @@ jobs:
           python -m unittest test_modbus_monitor test_modbus_extra
           python test_v24.py
           python test_v25.py
+          python test_v253.py
         env:
           ZT_SKIP_REAL_LLM: "1"
       - name: Bygg exe (PyInstaller via spec)

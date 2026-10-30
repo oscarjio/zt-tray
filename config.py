@@ -21,7 +21,7 @@ else:
 CONFIG_PATH = APP_DIR / "config.json"
 LOG_PATH = APP_DIR / "zt-tray.log"
 APP_NAME = "ZT-Tray"
-APP_VERSION = "2.5.2"
+APP_VERSION = "2.5.3"
 
 
 def log(msg):

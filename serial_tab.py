@@ -232,11 +232,12 @@ class SerialTab:
         port = M.port_name(self.cb_port.get())
         try:
             self.splitter = Splitter(float(self.sp_gap.get() or 0) / 1000, parse_eol(self.cb_eol.get()))
-            self.ser = serial.Serial(port, int(self.cb_baud.get()), bytesize=8, parity=self.cb_par.get(),
-                                     stopbits=int(self.cb_stop.get()), timeout=0.02)
+            kw = dict(baudrate=int(self.cb_baud.get()), bytesize=8, parity=self.cb_par.get(),
+                      stopbits=int(self.cb_stop.get()), timeout=0.02)
+            self.ser = M.open_with_timeout(lambda: serial.Serial(port, **kw), what=port)
         except Exception as e:
             self.ser = None
-            messagebox.showerror("Seriemonitor", f"Kan inte öppna {port}:\n{e}\n\n"
+            messagebox.showerror("Seriemonitor", M.explain_open_error(port, e) + "\n\n" + f"Kan inte öppna {port}:\n{e}\n\n"
                                  "Är porten upptagen (t.ex. av Modbus-fliken eller annat program)?", parent=self.f)
             return
         self.save_cfg()
